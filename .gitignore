@@ -1,0 +1,34 @@
+# Build directories
+build/
+.cache/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# clangd / LSP
+compile_commands.json
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Windsurf internal
+.windsurf/

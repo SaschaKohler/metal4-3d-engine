@@ -1,0 +1,43 @@
+# Default: C++20 for .hpp and .cpp
+CompileFlags:
+  Add:
+    - -std=c++20
+
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None
+
+Index:
+  Background: Build
+
+---
+# Objective-C++ for .mm implementation files
+If: { PathMatch: ".*\\.mm$" }
+CompileFlags:
+  Add:
+    - -x
+    - objective-c++
+    - -std=c++20
+    - -fobjc-arc
+    - -isysroot
+    - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk
+
+---
+# Objective-C++ for .h headers that contain ObjC (AppDelegate.h, MetalViewDelegate.h)
+If: { PathMatch: ".*(AppDelegate|MetalViewDelegate|.*Delegate)\\.h$" }
+CompileFlags:
+  Add:
+    - -x
+    - objective-c++-header
+    - -std=c++20
+    - -fobjc-arc
+    - -isysroot
+    - /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk
+
+---
+# Metal shaders
+If: { PathMatch: ".*\\.metal$" }
+CompileFlags:
+  Add:
+    - -x
+    - metal

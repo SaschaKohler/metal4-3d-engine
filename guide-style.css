@@ -1,0 +1,15 @@
+body { max-width: 900px; margin: 0 auto; padding: 2rem 2rem 4rem; font-family: -apple-system, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; line-height: 1.7; }
+h1, h2, h3, h4 { color: #64ffda; }
+h2 { border-bottom: 1px solid #2e3352; padding-bottom: 0.4rem; }
+a { color: #82aaff; }
+code { background: #1a1d27; border: 1px solid #2e3352; border-radius: 4px; padding: 0.15em 0.4em; color: #f78c6c; font-size: 0.88em; }
+pre { background: #0d1117; border: 1px solid #2e3352; border-radius: 8px; padding: 1.2rem; overflow-x: auto; }
+pre code { background: none; border: none; padding: 0; color: inherit; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th { background: #1a1d27; color: #64ffda; text-align: left; padding: 0.5rem 1rem; border: 1px solid #2e3352; }
+td { padding: 0.5rem 1rem; border: 1px solid #2e3352; }
+tr:nth-child(even) td { background: #1a1d2799; }
+blockquote { border-left: 3px solid #64ffda; margin: 0; padding: 0.5rem 1rem; color: #8892b0; background: #64ffda0a; }
+#TOC { background: #1a1d27; border: 1px solid #2e3352; border-radius: 8px; padding: 1rem 1.5rem; margin-bottom: 2rem; }
+#TOC ul { margin: 0.3rem 0; }
+hr { border: none; border-top: 1px solid #2e3352; margin: 2.5rem 0; }
