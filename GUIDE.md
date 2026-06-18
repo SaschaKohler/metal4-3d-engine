@@ -1465,92 +1465,763 @@ Mouse-Events laufen **ausserhalb** des Render-Loops — sie kommen vom NSEvent-S
 └─────────────────────────────────────────────────────────┘
 ```
 
-In Milestone 3 erweitern wir den **C++ Engine Layer** um Mesh Loading (cgltf) und einen Scene Graph — und setzen zum ersten Mal **Metal 4 APIs** ein (`MTL4ArgumentTable`).
+In Milestone 3 erweitern wir den **C++ Engine Layer** um Mesh Loading (cgltf), Index Buffer, Scene Graph und Phong-Lighting.
 
 ---
 
-# Milestone 3 — Mesh Loading & Scene Graph
+# Milestone 3 — Mesh Loading, Index Buffer & Scene Graph
 
-## Was wird gebaut?
+> Dieses Kapitel erklärt **jeden einzelnen Aspekt** des Milestone-3-Codes.
+> Wir laden zum ersten Mal ein echtes 3D-Objekt aus einer `.glb`-Datei,
+> bauen einen Scene Graph mit World-Matrix-Hierarchie, und rendern mit
+> Phong-Beleuchtung statt Vertex-Farben.
 
-Echte 3D-Objekte aus `.obj` oder `.gltf`-Dateien laden und in einer **Scene Graph**-Hierarchie verwalten.
+---
 
-## glTF — Das moderne 3D-Format
+## Inhaltsverzeichnis (Milestone 3)
 
-glTF 2.0 ist der "JPEG der 3D-Welt" — ein offenes Format das unterstützt:
-- Meshes (Vertices, Normals, UVs, Tangents)
-- Materialien (PBR-Parameter)
-- Szenen-Hierarchien (Parent-Child Transforms)
-- Animationen
-- Skelett-Animation (Skinning)
+29. [Die große Übersicht — Was ist neu?](#29-die-grosse-ubersicht-milestone-3)
+30. [glTF 2.0 — Das moderne 3D-Format](#30-gltf-20)
+31. [cgltf — Der header-only Loader](#31-cgltf)
+32. [Index Buffer — Vertices teilen statt duplizieren](#32-index-buffer)
+33. [Das neue Vertex-Layout: Position + Normal](#33-das-neue-vertex-layout)
+34. [Mesh.hpp / Mesh.mm — Zeile für Zeile](#34-meshhpp--meshmm)
+35. [Node.hpp — Der Scene Graph](#35-nodehpp--der-scene-graph)
+36. [Phong Lighting im Shader](#36-phong-lighting-im-shader)
+37. [Die Normal Matrix — Warum sie notwendig ist](#37-die-normal-matrix)
+38. [Renderer — buildScene und drawNode](#38-renderer--buildscene-und-drawnode)
+39. [CMakeLists.txt — Neue Einträge](#39-cmakeliststxt--neue-eintrage)
+40. [Der aktualisierte Render-Loop](#40-der-aktualisierte-render-loop)
+41. [Zusammenfassung: Was Milestone 3 aufgebaut hat](#41-zusammenfassung-milestone-3)
 
-Wir nutzen **`cgltf`** — eine header-only C-Bibliothek:
+---
+
+## 29. Die große Übersicht — Milestone 3
+
+Milestone 2 zeichnete ein rotierendes Dreieck mit MVP-Kamera. Milestone 3 ersetzt das durch ein **echtes 3D-Mesh** aus einer Datei, verwaltet in einem **Scene Graph**:
+
+```
+Was sich verändert hat:
+
+Milestone 2:  3 hardcodierte Vertices → Dreieck → Vertex-Farben
+Milestone 3:  glTF-Datei laden → Vertices + Normals + Indices
+                                  → Scene Graph Node-Hierarchie
+                                  → Phong-Beleuchtung
+```
+
+**Neue Dateien:**
+
+| Datei | Funktion |
+|---|---|
+| `src/Mesh.hpp` | Klassen-Interface: Vertex-Struct, Mesh-Klasse |
+| `src/Mesh.mm` | Implementation: cgltf laden, Metal Buffer bauen |
+| `src/Node.hpp` | Scene Graph Node: Transform + Children + worldMatrix |
+| `assets/cube.glb` | Khronos offizielles Box-Sample-Asset |
+| `vendor/cgltf` | header-only glTF 2.0 Loader (Git-Submodul) |
+
+**Geänderte Dateien:**
+
+| Datei | Was sich geändert hat |
+|---|---|
+| `shaders/triangle.metal` | VertexIn: float3 normal statt float4 color; Phong-Lighting im Fragment Shader; normalMatrix in Uniforms |
+| `src/Uniforms.hpp` | +normalMatrix (simd::float3x3) |
+| `src/Math.hpp` | +normalMatrix() Funktion |
+| `src/Renderer.hpp` | buildScene() statt buildGeometry(); Mesh* + shared_ptr<Node> |
+| `src/Renderer.mm` | Komplette Umstrukturierung auf Scene Graph + drawNode() |
+| `CMakeLists.txt` | Mesh.mm in Sources; vendor/cgltf im Include-Pfad; Assets-Copy |
+
+---
+
+## 30. glTF 2.0
+
+### Was ist glTF?
+
+**glTF** (Graphics Language Transmission Format) ist der offene Standard für 3D-Assets — von Khronos entwickelt, dem gleichen Konsortium das OpenGL und Vulkan betreut. Es wird oft als "JPEG der 3D-Welt" bezeichnet.
+
+Ein glTF-Asset beschreibt:
+- **Meshes** — Vertices (Position, Normal, UV, Tangent), Indices
+- **Materialien** — PBR-Parameter (Albedo, Metallic, Roughness, Normal Map)
+- **Szenen-Hierarchien** — Parent-Child Node-Bäume mit Transforms
+- **Animationen** — Keyframe-Animationen für Bones und Nodes
+- **Skelett-Animation** (Skinning) — Mesh-Deformation durch Bones
+
+### Zwei Dateiformate
+
+| Format | Beschreibung |
+|---|---|
+| `.gltf` | JSON + separate `.bin`-Dateien für Binärdaten |
+| `.glb` | Binary glTF — alles in einer Datei (JSON + Bin gepackt) |
+
+Wir nutzen `.glb` — eine einzige Datei, kein Pfad-Management nötig.
+
+### Warum glTF und nicht .obj?
+
+| | OBJ | glTF 2.0 |
+|---|---|---|
+| Format | ASCII Text | Binary + JSON |
+| Geschwindigkeit | Langsam (parsen) | Schnell (memcpy-fähig) |
+| PBR-Materialien | Nicht standardisiert | Vollständig definiert |
+| Animationen | Keine | Keyframe + Skelett |
+| Tool-Support | Überall | Blender, Unity, Unreal, etc. |
+| Khronos-Standard | Nein | Ja |
+
+`.obj` ist für Hobby-Projekte praktisch, aber für professionelle Engines ist glTF die richtige Wahl.
+
+### Unser Test-Asset: Khronos Box
+
+```
+assets/cube.glb  ←  Offizielles Khronos glTF-Sample-Asset "Box"
+```
+
+Das Khronos glTF-Sample-Repository (`KhronosGroup/glTF-Sample-Assets`) enthält dutzende validierte Test-Assets. `Box.glb` ist das einfachste — ein einziger Cube mit 24 Vertices und 36 Indices, Position + Normal.
+
+---
+
+## 31. cgltf
+
+### Was ist cgltf?
+
+`cgltf` ist eine **single-header C-Bibliothek** von Johannes Kuhlmann für glTF 2.0. "Single-header" bedeutet: die gesamte Implementation steckt in einer einzigen `.h`-Datei — kein Build-System-Aufwand, kein separates `.lib`-File.
+
+Das Muster für single-header Libraries:
 
 ```cpp
-#define CGLTF_IMPLEMENTATION
+// In GENAU EINER .mm-Datei (Mesh.mm):
+#define CGLTF_IMPLEMENTATION   // Aktiviert die Implementation
 #include "cgltf.h"
 
-cgltf_data* data = nullptr;
-cgltf_parse_file(&options, "model.gltf", &data);
-cgltf_load_buffers(&options, data, "model.gltf");
-// data->meshes[0].primitives[0].attributes → Vertices
+// In allen anderen Dateien: NUR einbinden, kein IMPLEMENTATION-Macro
+#include "cgltf.h"
 ```
 
-## Index Buffer
+Würde man `CGLTF_IMPLEMENTATION` in zwei `.mm`-Dateien setzen: **Linker-Fehler** wegen doppelter Symbole — exakt wie bei den metal-cpp Macros in `MetalImpl.mm`.
 
-Bis jetzt: 3 Vertices, 1 Dreieck. Ein echter Mesh hat tausende Vertices — viele davon **geteilt** zwischen Dreiecken. Index Buffer vermeiden Duplikate:
+### cgltf als Git-Submodul
+
+```bash
+git submodule add https://github.com/jkuhlmann/cgltf vendor/cgltf
+```
+
+cgltf liegt in `vendor/cgltf/cgltf.h`. In `CMakeLists.txt` fügen wir `vendor/cgltf` zum Include-Pfad hinzu — damit `#include "cgltf.h"` überall funktioniert.
+
+### Die cgltf API
+
+```c
+cgltf_options options{};
+cgltf_data*   data = nullptr;
+
+// Schritt 1: JSON-Header parsen (kein Binärdata geladen)
+cgltf_result result = cgltf_parse_file(&options, "cube.glb", &data);
+
+// Schritt 2: Binäre Buffer-Daten laden (die eigentlichen Vertex-Daten)
+cgltf_load_buffers(&options, data, "cube.glb");
+
+// Schritt 3: Zugriff auf Mesh-Daten
+cgltf_mesh*      mesh = &data->meshes[0];
+cgltf_primitive* prim = &mesh->primitives[0];
+
+// Attribute lesen
+for (size_t i = 0; i < prim->attributes_count; ++i) {
+    if (prim->attributes[i].type == cgltf_attribute_type_position)
+        posAcc = prim->attributes[i].data;  // cgltf_accessor*
+}
+
+// Accessor: typsicherer Zugriff auf rohe Bytes
+float tmp[3];
+cgltf_accessor_read_float(posAcc, vertexIndex, tmp, 3);
+
+// Index-Daten
+size_t idx = cgltf_accessor_read_index(prim->indices, indexIndex);
+
+// Schritt 4: Freigeben
+cgltf_free(data);
+```
+
+Ein **Accessor** ist cgltfs typsicheres Fenster in die rohen Bytes des Binary Buffers. Er beschreibt: welcher Typ (`FLOAT`, `UNSIGNED_SHORT`...), wie viele Komponenten (`SCALAR`, `VEC2`, `VEC3`...), und den Byte-Offset in den Buffer.
+
+---
+
+## 32. Index Buffer
+
+### Das Problem mit nicht-indizierten Meshes
+
+Bis Milestone 2 hatten wir drei Vertices → ein Dreieck. Bei einem echten Mesh (z.B. ein Würfel) werden Vertices zwischen benachbarten Dreiecken **geteilt**:
 
 ```
-Ohne Index Buffer (6 Vertices für 2 Dreiecke):
-v0 v1 v2 v0 v2 v3   ← v0 und v2 doppelt
+Würfel-Fläche (2 Dreiecke, 4 Ecken):
+
+  v0 ─── v1
+  │  ╲   │
+  │   ╲  │
+  v3 ─── v2
+
+Ohne Index Buffer (6 Vertices):
+Triangle 0: v0, v1, v2
+Triangle 1: v0, v2, v3
+→ v0 und v2 sind doppelt gespeichert!
 
 Mit Index Buffer (4 Vertices + 6 Indices):
-Vertices: v0 v1 v2 v3
-Indices:  0  1  2  0  2  3   ← Referenzieren Vertices by Index
+Vertices: v0, v1, v2, v3
+Indices:  0, 1, 2,  0, 2, 3
 ```
 
-Speicherersparnis bei einem typischen Mesh: ~40-60%.
+Bei einem typischen Mesh teilt jede Kante zwei Dreiecke. Ohne Index Buffer wäre jedes Vertex drei mal gespeichert (im Durchschnitt). Ein Index Buffer reduziert das auf einmal — **~60% Speicherersparnis**.
+
+Zusätzlich: Die GPU hat einen **Post-Transform Cache** (auch "Vertex Cache" genannt). Wenn derselbe Vertex-Index kurz hintereinander verarbeitet wird, kommt das Ergebnis aus dem Cache — kein zweiter Vertex-Shader-Aufruf nötig.
+
+### Metal Index Buffer API
 
 ```cpp
-m_indexBuffer = m_device->newBuffer(indices, indexCount * sizeof(uint32_t), ...);
-enc->drawIndexedPrimitives(MTL::PrimitiveTypeTriangle, indexCount,
-                           MTL::IndexTypeUInt32, m_indexBuffer, 0);
+// Buffer erstellen
+m_indexBuffer = device->newBuffer(
+    indices.data(),                      // uint32_t Array
+    indices.size() * sizeof(uint32_t),   // Byte-Größe
+    MTL::ResourceStorageModeShared);
+
+// Draw Call mit Index Buffer
+enc->drawIndexedPrimitives(
+    MTL::PrimitiveType::PrimitiveTypeTriangle,  // Primitiv-Typ
+    m_indexCount,                               // Anzahl Indices
+    MTL::IndexType::IndexTypeUInt32,            // Index-Typ (16 oder 32 Bit)
+    m_indexBuffer,                              // Der Index Buffer
+    0);                                         // Byte-Offset in den Buffer
 ```
 
-## Scene Graph
+Wir nutzen `uint32_t` (32-Bit Indices). Alternativ wäre `uint16_t` (16-Bit, max 65535 Vertices). Für den Khronos Box Mesh (24 Vertices) würde 16-Bit reichen, aber `uint32_t` ist der sichere Standard.
 
-Ein **Scene Graph** ist ein Baum von Nodes. Jeder Node hat:
-- Eine lokale Transform (Position, Rotation, Scale)
-- Optional eine Mesh-Referenz
-- Beliebig viele Child-Nodes
+### Warum cgltf_accessor_read_index?
 
+cgltf liest Indices aus dem glTF-Accessor. Der Index-Accessor kann verschiedene Formate haben (`UNSIGNED_BYTE`, `UNSIGNED_SHORT`, `UNSIGNED_INT`). `cgltf_accessor_read_index` abstrahiert das und gibt immer `size_t` zurück — wir casten dann auf `uint32_t`.
+
+---
+
+## 33. Das neue Vertex-Layout
+
+### Warum Normal statt Color?
+
+In Milestone 1+2 hatten wir:
+```cpp
+struct Vertex {
+    simd::float3 position;   // 12 Bytes
+    simd::float4 color;      // 16 Bytes  ← weg
+};
 ```
-Root
-├── DirectionalLight
-├── Suzanne (Monkey Mesh)
-│   ├── LeftEye
-│   └── RightEye
-└── Floor
-```
 
-Die **World Matrix** eines Nodes = eigene Local Matrix × Parent World Matrix. So bewegen sich Kinder automatisch mit dem Elternteil.
-
-## MTL4ArgumentTable — Erster Einsatz
-
-Mit vielen Meshes und Materialien lohnt sich jetzt der Metal 4 Weg:
+Farben macht ein Lighting-Modell überflüssig: wir berechnen die Farbe aus Beleuchtung + Materialfarbe. Dafür brauchen wir die **Oberflächennormale** — den Vektor der senkrecht zur Fläche zeigt.
 
 ```cpp
-// Alle Buffer in einer Table bündeln
-MTL4ArgumentTable* table = device->newArgumentTable(descriptor);
-table->setBuffer(vertexBuffer,  0, 0);
-table->setBuffer(uniformBuffer, 0, 1);
-table->setTexture(albedoTex,       0);
-
-// Ein einziger Bind-Call statt vieler einzelner
-encoder->setVertexArgumentTable(table, 0);
+struct Vertex {
+    simd::float3 position;   // 12 Bytes
+    simd::float3 normal;     // 12 Bytes  ← neu
+};
+// Gesamtgröße: 24 Bytes pro Vertex
 ```
 
-**Bindless Rendering**: Der Shader kann über einen Index in ein Array von Texturen/Buffern zugreifen — ohne dass die CPU für jedes Objekt einen separaten Bind-Call macht. Fundamental für performantes Rendern vieler Objekte.
+### Was ist eine Normale?
+
+Eine **Oberflächennormale** ist ein Einheitsvektor (Länge = 1) der senkrecht zur Oberfläche eines Dreiecks zeigt. Sie wird für Beleuchtungsberechnungen gebraucht:
+
+```
+     ↑ Normal (0, 1, 0)
+     │
+─────┼──────  Fläche (horizontal)
+
+Je mehr die Normale zum Licht zeigt, desto heller die Fläche.
+```
+
+Bei einem Würfel hat jede Seite eine Normale die nach außen zeigt: oben `(0,1,0)`, rechts `(1,0,0)`, vorne `(0,0,1)`, etc.
+
+### Warum nicht die Normale aus den Vertices berechnen?
+
+Man könnte die Normale eines Dreiecks berechnen via `cross(v1-v0, v2-v0)`. Aber glTF-Meshes liefern **Vertex-Normalen** — pro Vertex definiert, nicht pro Dreieck. Das erlaubt **smooth shading**: an einer Kante zwischen zwei Dreiecken werden die Normalen interpoliert, die Oberfläche sieht weich aus statt facettiert.
+
+---
+
+## 34. Mesh.hpp / Mesh.mm
+
+### Mesh.hpp — Das Interface
+
+```cpp
+class Mesh {
+public:
+    static Mesh* loadGLB(MTL::Device* device, const std::string& path);
+    ~Mesh();
+    void draw(MTL::RenderCommandEncoder* enc) const;
+    bool isValid() const { return m_vertexBuffer && m_indexBuffer; }
+
+private:
+    MTL::Buffer* m_vertexBuffer { nullptr };
+    MTL::Buffer* m_indexBuffer  { nullptr };
+    uint32_t     m_indexCount   { 0 };
+};
+```
+
+`loadGLB` ist eine **static factory method** — sie erstellt ein Mesh-Objekt und gibt einen rohen Pointer zurück (oder `nullptr` bei Fehler). Der Renderer ist Owner und löscht das Mesh im Destruktor via `delete m_mesh`.
+
+### Mesh.mm — Pfad-Auflösung
+
+```cpp
+static std::string executableDir() {
+    char buf[4096];
+    uint32_t size = sizeof(buf);
+    _NSGetExecutablePath(buf, &size);
+    std::string path(buf);
+    auto pos = path.rfind('/');
+    return (pos != std::string::npos) ? path.substr(0, pos) : ".";
+}
+```
+
+Wenn das Programm aus einem anderen Verzeichnis gestartet wird (z.B. `./build/metal4engine`), würde ein relativer Pfad wie `"assets/cube.glb"` falsch aufgelöst. Wir holen den absoluten Pfad zur Binary und bauen den Asset-Pfad relativ dazu.
+
+`_NSGetExecutablePath` ist eine `<mach-o/dyld.h>`-Funktion — Apple-spezifisch. `rfind('/')` findet das letzte `/` im Pfad und schneidet den Dateinamen ab.
+
+### Mesh.mm — Zwei-Schritt Pfad-Fallback
+
+```cpp
+cgltf_result result = cgltf_parse_file(&options, path.c_str(), &data);
+if (result != cgltf_result_success) {
+    std::string exePath = executableDir() + "/" + path;
+    result = cgltf_parse_file(&options, exePath.c_str(), &data);
+}
+```
+
+Wir versuchen zuerst den Pfad as-is (falls er absolut ist oder der CWD stimmt). Wenn das fehlschlägt, kombinieren wir executableDir + relativen Pfad. Das gleiche Muster für `cgltf_load_buffers`.
+
+### Mesh.mm — Float-Zugriff auf simd-Vektoren
+
+```cpp
+float tmp[3];
+cgltf_accessor_read_float(posAcc, i, tmp, 3);
+vertices[i].position = simd::float3{ tmp[0], tmp[1], tmp[2] };
+```
+
+Man könnte erwarten: `cgltf_accessor_read_float(posAcc, i, &vertices[i].position.x, 3)`. Das geht **nicht** — `simd::float3` ist ein SIMD-Typ dessen Komponenten nicht adressierbar sind (sie liegen in SIMD-Registern). Deshalb lesen wir in ein temporäres C-Array und konstruieren dann den `simd::float3`.
+
+### Mesh.mm — draw()
+
+```cpp
+void Mesh::draw(MTL::RenderCommandEncoder* enc) const {
+    enc->setVertexBuffer(m_vertexBuffer, 0, 0);
+    enc->drawIndexedPrimitives(
+        MTL::PrimitiveType::PrimitiveTypeTriangle,
+        m_indexCount,
+        MTL::IndexType::IndexTypeUInt32,
+        m_indexBuffer,
+        0);
+}
+```
+
+`draw()` macht genau zwei Dinge: Vertex Buffer binden (Slot 0) und indizierten Draw Call. Der Uniform Buffer (Slot 1) wird **außerhalb** von `draw()` gesetzt (in `drawNode()`) weil er von der Node-Transform abhängt, nicht vom Mesh.
+
+---
+
+## 35. Node.hpp — Der Scene Graph
+
+### Konzept
+
+Ein **Scene Graph** ist ein **Baum von Transformationen**. Jeder Node hat:
+- Eine **lokale Transform** (Position, Rotation, Scale relativ zum Parent)
+- Eine **World Matrix** (absolute Position/Rotation/Scale in der Welt)
+- Optional eine **Mesh-Referenz** (Nodes ohne Mesh sind reine Gruppen-Nodes)
+- Beliebig viele **Child-Nodes**
+
+```
+Root (worldMatrix = identity)
+└── Cube (translation=(0,0,0), rotation=0.8t rad Y)
+    worldMatrix = root.worldMatrix * local
+```
+
+In unserem Milestone-3-Beispiel ist der Tree flach: Root → ein Cube-Node. Die Struktur ist aber offen für beliebige Tiefe.
+
+### Die World-Matrix-Formel
+
+```
+worldMatrix = parentWorldMatrix × localMatrix
+```
+
+`localMatrix` ist das Produkt aus Translation × Rotation × Scale des Nodes selbst.
+
+**Reihenfolge**: Scale zuerst, dann Rotation, dann Translation (TRS-Konvention). Das ist die Reihenfolge in der glTF-Nodes gespeichert sind.
+
+```cpp
+void updateWorldMatrix(const simd::float4x4& parentWorld = matrix_identity_float4x4) {
+    simd::float4x4 local =
+        math::translation(translation.x, translation.y, translation.z)
+        * math::rotation(rotationAngle, rotationAxis)
+        * math::scale(uniformScale);
+
+    worldMatrix = parentWorld * local;
+
+    for (auto& child : m_children)
+        child->updateWorldMatrix(worldMatrix);
+}
+```
+
+Der Aufruf ist rekursiv — top-down vom Root. Jeder Node berechnet seine World Matrix aus der bereits berechneten Parent-World-Matrix. So muss man nur einmal von Root starten.
+
+### Warum `std::shared_ptr` für Children?
+
+```cpp
+std::vector<std::shared_ptr<Node>> m_children;
+```
+
+`shared_ptr` ermöglicht es, dass mehrere Stellen eine Node halten können (z.B. eine Animation-Liste und der Scene Graph). Der Destruktor räumt automatisch auf wenn der letzte `shared_ptr` weg ist.
+
+In unserem einfachen Milestone-3-Szenario wäre `unique_ptr` auch ausreichend, aber `shared_ptr` ist die robustere Wahl für spätere Erweiterungen.
+
+### Nicht-owning Mesh-Pointer
+
+```cpp
+Mesh* mesh { nullptr };   // nicht-owning!
+```
+
+Der Node **referenziert** ein Mesh, er **besitzt** es nicht. Der Renderer besitzt das Mesh (`m_mesh`). Mehrere Nodes könnten dasselbe Mesh referenzieren (Instancing) — das ist der Hauptvorteil dieser Trennung.
+
+---
+
+## 36. Phong Lighting im Shader
+
+In Milestone 2 gab der Fragment Shader einfach die interpolierte Vertex-Farbe aus. In Milestone 3 berechnen wir ein Beleuchtungsmodell.
+
+### Das Phong-Modell
+
+Das **Phong Beleuchtungsmodell** (1975, Bui Tuong Phong) ist das klassische Echtzeit-Beleuchtungsmodell — in modernen Engines oft durch PBR ersetzt, aber ideal zum Lernen:
+
+```
+I_total = I_ambient + I_diffuse + I_specular
+```
+
+Wir nutzen nur **Ambient + Diffuse** (kein Specular — für Milestone 3 ausreichend):
+
+```metal
+fragment float4 fragment_main(VertexOut in [[stage_in]]) {
+    float3 lightDir  = normalize(float3(1.0, 2.0, 1.5));  // fester Lichtvektor
+    float3 norm      = normalize(in.worldNorm);            // normalisierte Normale
+    float  diffuse   = saturate(dot(norm, lightDir));      // Lambert-Term
+    float  ambient   = 0.15;
+    float  intensity = ambient + diffuse * 0.85;
+
+    float3 baseColor = float3(0.72, 0.55, 0.38);           // warm clay
+    return float4(baseColor * intensity, 1.0);
+}
+```
+
+### Lambert-Term
+
+```metal
+float diffuse = saturate(dot(norm, lightDir));
+```
+
+Das **Skalarprodukt** (dot product) zweier normalisierter Vektoren gibt den Kosinus des Winkels zwischen ihnen:
+- Normale zeigt direkt zum Licht (`dot = 1.0`): maximale Helligkeit
+- Normale senkrecht zum Licht (`dot = 0.0`): keine direkte Beleuchtung
+- Normale weg vom Licht (`dot < 0.0`): `saturate()` klemmt auf 0
+
+`saturate(x)` ist eine MSL Built-in Funktion: `clamp(x, 0.0, 1.0)`.
+
+### Ambient Term
+
+```metal
+float ambient = 0.15;
+float intensity = ambient + diffuse * 0.85;
+```
+
+**Ambient Light** simuliert indirektes Licht das von allen Seiten kommt. Ohne Ambient wären Flächen die vom Licht weg zeigen komplett schwarz — unrealistisch. 15% Ambient gibt der Szene eine minimale Grundhelligkeit.
+
+### Warum worldNorm und nicht objectNorm?
+
+Wenn wir das Modell rotieren, drehen sich auch seine Normalen. Ein Würfel der um 90° rotiert ist, hat jetzt eine andere Normalenorientierung im Welt-Raum — obwohl die Normalen in Object Space immer gleich bleiben.
+
+```
+Object Space Normal: (0, 1, 0) = zeigt nach oben
+Nach Rotation um 90° Y: muss jetzt in World Space (1, 0, 0) sein (zeigt nach rechts)
+```
+
+Deshalb: Normalen in World Space transformieren (via Normal Matrix) → im Fragment Shader in World Space mit dem Lichtvektor (auch in World Space) vergleichen.
+
+---
+
+## 37. Die Normal Matrix
+
+### Das Problem mit nicht-uniformem Scale
+
+Wenn man Normalen mit der Model Matrix transformiert funktioniert das bei **Rotation** korrekt, aber **nicht bei nicht-uniformem Scale**. Beispiel:
+
+```
+Objekt in X-Richtung auf 2.0 skaliert:
+  Model Matrix skaliert Position: (1, 0, 0) → (2, 0, 0)  ✓
+  Model Matrix skaliert Normal:   (1, 0, 0) → (2, 0, 0)  → nach Normalisierung OK...
+  Aber: schräge Normale (1, 1, 0) → (2, 1, 0) → falsche Richtung!
+```
+
+Die korrekte Lösung: Die **Normal Matrix** = `transpose(inverse(modelMatrix))`'s obere-linke 3×3.
+
+### Herleitung
+
+Sei `M` die Model Matrix. Eine Normale `n` ist orthogonal zu einer Tangente `t` auf der Oberfläche: `dot(n, t) = 0`.
+
+Nach der Transformation gilt: `dot(N*n, M*t) = 0`, also `(N*n)^T * M*t = 0`, also `n^T * N^T * M * t = 0`. Das ist nur dann für alle `t` wahr wenn `N^T * M = I`, also `N = (M^-1)^T = transpose(inverse(M))`.
+
+### Math.hpp — normalMatrix()
+
+```cpp
+inline simd::float3x3 normalMatrix(const simd::float4x4& m) {
+    simd::float3x3 upper{
+        simd::float3{ m.columns[0].x, m.columns[0].y, m.columns[0].z },
+        simd::float3{ m.columns[1].x, m.columns[1].y, m.columns[1].z },
+        simd::float3{ m.columns[2].x, m.columns[2].y, m.columns[2].z }
+    };
+    return simd::transpose(simd::inverse(upper));
+}
+```
+
+Wir extrahieren die obere-linke 3×3 aus der 4×4 Model Matrix (die Translations-Spalte ist für Normalen irrelevant) und berechnen `transpose(inverse(...))`.
+
+`simd::inverse()` und `simd::transpose()` sind direkte SIMD-Operationen — sehr schnell.
+
+### Uniforms.hpp — das Update
+
+```cpp
+struct Uniforms {
+    simd::float4x4 modelMatrix;
+    simd::float4x4 viewMatrix;
+    simd::float4x4 projectionMatrix;
+    simd::float3x3 normalMatrix;     // transpose(inverse(modelMatrix)) obere-linke 3x3
+};
+```
+
+`simd::float3x3` ist 36 Bytes (3 × 3 × 4). Das Struct ist nun **228 Bytes** gesamt. **Kein Padding-Problem** weil `float4x4` 16-Byte-aligned ist und `float3x3` nach drei `float4x4` folgt.
+
+### Im Shader
+
+```metal
+struct Uniforms {
+    float4x4 modelMatrix;
+    float4x4 viewMatrix;
+    float4x4 projectionMatrix;
+    float3x3 normalMatrix;
+};
+
+// Im Vertex Shader:
+float3 worldNorm = uniforms.normalMatrix * vertices[vertexID].normal;
+```
+
+MSL `float3x3` und C++ `simd::float3x3` haben dasselbe Memory-Layout — `memcpy` funktioniert korrekt.
+
+---
+
+## 38. Renderer — buildScene und drawNode
+
+### buildScene()
+
+```cpp
+void Renderer::buildScene() {
+    m_mesh = Mesh::loadGLB(m_device, "assets/cube.glb");
+
+    m_sceneRoot = std::make_shared<Node>("root");
+
+    auto meshNode = std::make_shared<Node>("cube");
+    meshNode->mesh          = m_mesh;
+    meshNode->translation   = { 0.0f, 0.0f, 0.0f };
+    meshNode->rotationAxis  = { 0.0f, 1.0f, 0.0f };
+    meshNode->rotationAngle = 0.0f;
+    meshNode->uniformScale  = 1.0f;
+
+    m_sceneRoot->addChild(meshNode);
+}
+```
+
+`buildScene()` ersetzt `buildGeometry()`. Die Trennung: der Renderer besitzt `m_mesh` (der Metal Buffer) und den Scene Graph (der die Transform-Hierarchie beschreibt). Der `meshNode` hält einen nicht-owning Pointer auf `m_mesh`.
+
+### Animation im draw()
+
+```cpp
+void Renderer::draw(...) {
+    m_time += 1.0f / 60.0f;
+
+    // Cube-Node animieren
+    if (!m_sceneRoot->children().empty()) {
+        auto& cube = *m_sceneRoot->children()[0];
+        cube.rotationAngle = m_time * 0.8f;
+    }
+
+    // World Matrices top-down aktualisieren
+    m_sceneRoot->updateWorldMatrix();
+```
+
+Wir setzen nur `rotationAngle` des Cube-Nodes — `updateWorldMatrix()` berechnet dann automatisch die neue `worldMatrix`. Kein direktes Matrix-Manipulieren mehr.
+
+### drawNode() — Rekursive Funktion
+
+```cpp
+static void drawNode(const Node& node,
+                     MTL::RenderCommandEncoder* enc,
+                     MTL::Buffer* uniformBuffer,
+                     const simd::float4x4& view,
+                     const simd::float4x4& proj) {
+    if (node.mesh && node.mesh->isValid()) {
+        Uniforms u;
+        u.modelMatrix      = node.worldMatrix;
+        u.viewMatrix       = view;
+        u.projectionMatrix = proj;
+        u.normalMatrix     = math::normalMatrix(node.worldMatrix);
+        std::memcpy(uniformBuffer->contents(), &u, sizeof(Uniforms));
+
+        enc->setVertexBuffer(uniformBuffer, 0, 1);
+        node.mesh->draw(enc);
+    }
+
+    for (const auto& child : node.children())
+        drawNode(*child, enc, uniformBuffer, view, proj);
+}
+```
+
+Diese Funktion traversiert den Scene Graph rekursiv. Für jeden Node der ein valides Mesh hat:
+1. Uniforms mit der Node's `worldMatrix` befüllen
+2. Uniform Buffer binden
+3. Mesh zeichnen
+
+Dann für alle Kinder rekursiv. Die Reihenfolge (Pre-Order DFS) ist für unser Szenario egal — bei Transparenz würde man aber Back-to-Front sortieren.
+
+**Wichtig**: In dieser einfachen Variante überschreibt jeder Node denselben `uniformBuffer`. Das funktioniert weil wir kein Multi-Threading und keine parallelen Draw Calls haben. Mit mehreren Meshes und Triple-Buffering würde man einen Ring-Buffer oder `MTL4ArgumentTable` verwenden (→ Milestone 4).
+
+---
+
+## 39. CMakeLists.txt — Neue Einträge
+
+### Mesh.mm in ENGINE_SOURCES
+
+```cmake
+set(ENGINE_SOURCES
+    src/main.mm
+    src/AppDelegate.mm
+    src/MetalViewDelegate.mm
+    src/InputMTKView.mm
+    src/Renderer.mm
+    src/Mesh.mm          # ← neu
+    src/MetalImpl.mm
+)
+```
+
+`Mesh.mm` enthält `#define CGLTF_IMPLEMENTATION` und damit die gesamte cgltf-Implementation. Sie muss in die Source-Liste damit CMake sie kompiliert.
+
+### cgltf Include-Pfad
+
+```cmake
+target_include_directories(metal4engine PRIVATE
+    ${CMAKE_SOURCE_DIR}/vendor/metal-cpp
+    ${CMAKE_SOURCE_DIR}/vendor/cgltf    # ← neu
+    ${CMAKE_SOURCE_DIR}/src
+)
+```
+
+So findet `#include "cgltf.h"` die Datei in `vendor/cgltf/cgltf.h`.
+
+### Assets in das Build-Verzeichnis kopieren
+
+```cmake
+add_custom_command(TARGET metal4engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:metal4engine>/assets
+)
+```
+
+`POST_BUILD` = wird nach dem Linken ausgeführt. `copy_directory` kopiert den gesamten `assets/`-Ordner neben die Binary. `$<TARGET_FILE_DIR:metal4engine>` ist ein CMake Generator-Expression — es expandiert zum Verzeichnis in dem die Binary liegt (z.B. `build/metal4engine.app/Contents/MacOS/`).
+
+So liegt `cube.glb` nach dem Build immer neben der Binary und unser Pfad-Lookup funktioniert.
+
+---
+
+## 40. Der aktualisierte Render-Loop
+
+```
+draw() aufgerufen von MTKView (60fps)
+    │
+    ├─ m_time += 1/60
+    │
+    ├─ cube.rotationAngle = m_time * 0.8f     (Animation)
+    ├─ sceneRoot.updateWorldMatrix()           (World Matrices berechnen)
+    │
+    ├─ View Matrix  = lookAt(camera.eye(), camera.target, up)
+    ├─ Proj Matrix  = perspectiveFov(60°, aspect, 0.01, 1000)
+    │
+    ├─ CommandBuffer holen
+    ├─ RenderPassDescriptor (clear color + clear depth)
+    ├─ RenderCommandEncoder öffnen
+    │    ├─ setRenderPipelineState
+    │    ├─ setDepthStencilState
+    │    ├─ setViewport
+    │    └─ drawNode(sceneRoot, enc, uniformBuffer, view, proj)
+    │         ├─ für jeden Node mit Mesh:
+    │         │    ├─ Uniforms befüllen (worldMatrix, view, proj, normalMatrix)
+    │         │    ├─ setVertexBuffer(uniformBuffer, 0, slot=1)
+    │         │    └─ mesh.draw(enc)  → setVertexBuffer(vertices, slot=0)
+    │         │                         drawIndexedPrimitives(...)
+    │         └─ rekursiv für Children
+    ├─ endEncoding
+    ├─ presentDrawable
+    └─ commit
+```
+
+**Was weggefallen ist** gegenüber Milestone 2:
+- Kein `m_vertexBuffer` mehr im Renderer — der lebt jetzt in `Mesh`
+- Kein manuelles `buildGeometry()` — ersetzt durch `buildScene()` + cgltf
+
+**Was dazugekommen ist**:
+- `drawNode()` — rekursive Scene-Graph-Traversierung
+- `normalMatrix` in Uniforms — korrekte Normalentransformation
+- `drawIndexedPrimitives` statt `drawPrimitives`
+
+---
+
+## 41. Zusammenfassung: Was Milestone 3 aufgebaut hat
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    macOS App Layer                       │
+│  main.mm → NSApplication → AppDelegate → NSWindow       │
+│                            ↓ makeFirstResponder          │
+│                      InputMTKView  ← Mouse/Scroll Events │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│                  MetalKit Bridge Layer                   │
+│  InputMTKView → MetalViewDelegate                        │
+│                 (draw + resize + mouse-forward)          │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│                   C++ Engine Layer                       │
+│  Renderer                                                │
+│  ├─ Camera (orbit)                                       │
+│  ├─ Math (lookAt, perspectiveFov, rotation, normalMatrix)│
+│  ├─ Uniforms (M, V, P, normalMatrix)                     │
+│  │                                                       │
+│  ├─ Scene Graph:                                         │
+│  │    Root Node                                          │
+│  │    └── Cube Node (translation, rotation, scale)       │
+│  │         worldMatrix = parentWorld × local             │
+│  │                                                       │
+│  └─ Mesh (cgltf loader)                                  │
+│       ├─ MTL::Buffer (Vertex: position + normal)         │
+│       └─ MTL::Buffer (Index: uint32_t)                   │
+│            → drawIndexedPrimitives()                     │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│                     GPU / MSL Layer                      │
+│  vertex_main(vertices[[0]], uniforms[[1]])                │
+│    → MVP * position                                      │
+│    → normalMatrix * normal → worldNorm                   │
+│  fragment_main(worldNorm)                                │
+│    → Lambert diffuse + ambient → clay color              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Kernerkenntnis von Milestone 3**: Der Renderer kennt keine Vertex-Daten mehr direkt. Er arbeitet mit dem Scene Graph (Transforms) und delegiert das Zeichnen an `Mesh::draw()`. Das ist die saubere Trennung zwischen **Szenen-Logik** (Node-Hierarchie) und **GPU-Ressourcen** (Buffer).
+
+In Milestone 4 setzen wir das erste **Metal 4 Feature** ein: `MTL4ArgumentTable` (Bindless Buffers) — um viele Meshes effizienter zu rendern ohne pro-Objekt-Bind-Calls.
 
 ---
 
@@ -1811,15 +2482,16 @@ Latenter Code (8 Floats) → [Neural Network] → Albedo + Normal + Roughness + 
 # Roadmap: Wo Metal 4 Features eingesetzt werden
 
 ```
-M1  ──── Basis (Metal 1-3 APIs, Architektur aufbauen)
-M2  ──── simd Matrizen, Uniform Buffer, Kamera
-M3  ──── MTL4ArgumentTable (Bindless), cgltf, Scene Graph
-M4  ──── MTL4CommandEncoder (Unified), GBuffer, PBR BRDF
-M5  ──── MetalFX Temporal Upscaling + Frame Interpolation
-M6  ──── Acceleration Structures, Inline Ray Tracing, Denoiser
-M7  ──── MSL Tensors, Neural Accelerators, Neural Material Synthesis
-         ↑
-         Hier sind alle Metal 4-Features aktiv
+M1  ✅── Basis (Metal 1-3 APIs, Architektur aufbauen)
+M2  ✅── simd Matrizen, Uniform Buffer, Orbit-Kamera, MVP
+M3  ✅── cgltf glTF-Loader, Index Buffer, Scene Graph, Phong Lighting
+M4  ────  MTL4ArgumentTable (Bindless Buffers), PBR BRDF, GBuffer
+M5  ────  MTL4CommandEncoder (Unified Encoder), Deferred Lighting
+M6  ────  MetalFX Temporal Upscaling + Frame Interpolation
+M7  ────  Acceleration Structures, Inline Ray Tracing, RT Denoiser
+M8  ────  MSL Tensors, Neural Accelerators, Neural Material Synthesis
+          ↑
+          Hier sind alle Metal 4-Features aktiv
 ```
 
 Jeder Milestone baut auf dem vorherigen auf. Kein Schritt kann übersprungen werden ohne das Fundament zu verlieren.
