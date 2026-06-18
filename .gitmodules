@@ -1,3 +1,6 @@
 [submodule "vendor/metal-cpp"]
 	path = vendor/metal-cpp
 	url = https://github.com/nickmain/metal-cpp
+[submodule "vendor/cgltf"]
+	path = vendor/cgltf
+	url = https://github.com/jkuhlmann/cgltf

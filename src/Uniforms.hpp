@@ -14,4 +14,5 @@ struct Uniforms {
     simd::float4x4 modelMatrix;
     simd::float4x4 viewMatrix;
     simd::float4x4 projectionMatrix;
+    simd::float3x3 normalMatrix;     // transpose(inverse(modelMatrix)) upper-left 3x3
 };

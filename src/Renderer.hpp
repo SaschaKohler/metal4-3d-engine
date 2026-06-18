@@ -2,12 +2,15 @@
 
 #include <Metal/Metal.hpp>
 #include <QuartzCore/QuartzCore.hpp>
+#include <memory>
 #include "Camera.hpp"
+#include "Mesh.hpp"
+#include "Node.hpp"
 
 // ---------------------------------------------------------------------------
 // Renderer
-// Owns the Metal device, command queue, pipeline state, vertex buffer,
-// uniform buffer, depth stencil state, and the orbit camera.
+// Owns the Metal device, command queue, pipeline state, uniform buffer,
+// depth stencil state, orbit camera, loaded mesh, and the scene root node.
 // ---------------------------------------------------------------------------
 class Renderer {
 public:
@@ -23,19 +26,20 @@ public:
 
 private:
     void buildPipeline();
-    void buildGeometry();
     void buildUniformBuffer();
     void buildDepthStencilState();
+    void buildScene();
 
-    MTL::Device*              m_device             { nullptr };
-    MTL::CommandQueue*        m_commandQueue       { nullptr };
-    MTL::RenderPipelineState* m_pipelineState      { nullptr };
-    MTL::DepthStencilState*   m_depthStencilState  { nullptr };
-    MTL::Buffer*              m_vertexBuffer       { nullptr };
-    MTL::Buffer*              m_uniformBuffer      { nullptr };
-    MTL::Library*             m_library            { nullptr };
+    MTL::Device*              m_device            { nullptr };
+    MTL::CommandQueue*        m_commandQueue      { nullptr };
+    MTL::RenderPipelineState* m_pipelineState     { nullptr };
+    MTL::DepthStencilState*   m_depthStencilState { nullptr };
+    MTL::Buffer*              m_uniformBuffer     { nullptr };
+    MTL::Library*             m_library           { nullptr };
+
+    Mesh*                     m_mesh              { nullptr };   // owned
+    std::shared_ptr<Node>     m_sceneRoot;
 
     Camera m_camera;
-
-    float m_time { 0.0f };   // seconds elapsed — used to spin the model
+    float  m_time { 0.0f };
 };

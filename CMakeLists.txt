@@ -17,6 +17,7 @@ set(ENGINE_SOURCES
     src/MetalViewDelegate.mm
     src/InputMTKView.mm
     src/Renderer.mm
+    src/Mesh.mm
     src/MetalImpl.mm        # metal-cpp implementation (defined once)
 )
 
@@ -26,6 +27,7 @@ add_executable(metal4engine MACOSX_BUNDLE ${ENGINE_SOURCES})
 # Clone https://github.com/apple/metal-cpp into vendor/metal-cpp
 target_include_directories(metal4engine PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/metal-cpp
+    ${CMAKE_SOURCE_DIR}/vendor/cgltf
     ${CMAKE_SOURCE_DIR}/src
 )
 
@@ -82,6 +84,13 @@ add_custom_command(TARGET metal4engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${METALLIB_OUT}
         $<TARGET_FILE_DIR:metal4engine>/default.metallib
+)
+
+# Copy assets directory next to the executable
+add_custom_command(TARGET metal4engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:metal4engine>/assets
 )
 
 # ── macOS bundle info ─────────────────────────────────────────────────────────

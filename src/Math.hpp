@@ -99,4 +99,18 @@ inline simd::float4x4 perspectiveFov(float fovY,
     return m;
 }
 
+// ---------------------------------------------------------------------------
+// Normal matrix — upper-left 3x3 of transpose(inverse(m))
+// For rigid-body transforms (rotation + uniform scale) this equals the
+// upper-left 3x3 of the model matrix itself; we compute it generically.
+// ---------------------------------------------------------------------------
+inline simd::float3x3 normalMatrix(const simd::float4x4& m) {
+    simd::float3x3 upper{
+        simd::float3{ m.columns[0].x, m.columns[0].y, m.columns[0].z },
+        simd::float3{ m.columns[1].x, m.columns[1].y, m.columns[1].z },
+        simd::float3{ m.columns[2].x, m.columns[2].y, m.columns[2].z }
+    };
+    return simd::transpose(simd::inverse(upper));
+}
+
 } // namespace math
