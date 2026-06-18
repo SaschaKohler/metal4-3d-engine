@@ -1,0 +1,3 @@
+[submodule "vendor/metal-cpp"]
+	path = vendor/metal-cpp
+	url = https://github.com/nickmain/metal-cpp
