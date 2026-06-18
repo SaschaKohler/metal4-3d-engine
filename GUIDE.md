@@ -1382,6 +1382,21 @@ enc->setVertexBuffer(m_uniformBuffer, 0, 1);  // slot 1 = Uniforms
 
 `deltaX`/`deltaY` sind die **Differenz** seit dem letzten Event in Punkten — nicht absolute Koordinaten. Das ist genau was wir für Orbit/Pan brauchen.
 
+### Invertierung von deltaX im Orbit
+
+In `Renderer::onMouseDrag` wird `dx` negiert bevor er an `camera.orbit()` weitergegeben wird:
+
+```cpp
+void Renderer::onMouseDrag(float dx, float dy, bool rightButton) {
+    if (rightButton) m_camera.pan(dx, dy);
+    else             m_camera.orbit(-dx, dy);  // ← negiertes dx
+}
+```
+
+**Warum?** `NSEvent.deltaX` ist positiv wenn die Maus nach **rechts** bewegt wird. In `Camera::orbit()` erhöht ein positives `dx` den `yaw`-Winkel — was die Kamera entgegen dem Uhrzeigersinn dreht (die Welt dreht sich nach rechts). Das fühlt sich invertiert an: man zieht nach rechts, der Cube dreht sich nach rechts statt dass die Kamera nach rechts "fliegt".
+
+Mit `-dx`: Maus nach rechts → negativer yaw-Zuwachs → Kamera dreht im Uhrzeigersinn → intuitives "ich drehe den Cube mit der Maus"-Gefühl.
+
 ### Trackpad vs. Mausrad
 
 ```objc

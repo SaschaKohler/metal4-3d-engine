@@ -1742,6 +1742,25 @@ weiterleitet</li>
 <p><code>deltaX</code>/<code>deltaY</code> sind die
 <strong>Differenz</strong> seit dem letzten Event in Punkten — nicht
 absolute Koordinaten. Das ist genau was wir für Orbit/Pan brauchen.</p>
+<h3 id="invertierung-von-deltax-im-orbit">Invertierung von deltaX im
+Orbit</h3>
+<p>In <code>Renderer::onMouseDrag</code> wird <code>dx</code> negiert
+bevor er an <code>camera.orbit()</code> weitergegeben wird:</p>
+<div class="sourceCode" id="cb88"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb88-1"><a href="#cb88-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Renderer<span class="op">::</span>onMouseDrag<span class="op">(</span><span class="dt">float</span> dx<span class="op">,</span> <span class="dt">float</span> dy<span class="op">,</span> <span class="dt">bool</span> rightButton<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb88-2"><a href="#cb88-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(</span>rightButton<span class="op">)</span> <span class="va">m_camera</span><span class="op">.</span>pan<span class="op">(</span>dx<span class="op">,</span> dy<span class="op">);</span></span>
+<span id="cb88-3"><a href="#cb88-3" aria-hidden="true" tabindex="-1"></a>    <span class="cf">else</span>             <span class="va">m_camera</span><span class="op">.</span>orbit<span class="op">(-</span>dx<span class="op">,</span> dy<span class="op">);</span>  <span class="co">// ← negiertes dx</span></span>
+<span id="cb88-4"><a href="#cb88-4" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<p><strong>Warum?</strong> <code>NSEvent.deltaX</code> ist positiv wenn
+die Maus nach <strong>rechts</strong> bewegt wird. In
+<code>Camera::orbit()</code> erhöht ein positives <code>dx</code> den
+<code>yaw</code>-Winkel — was die Kamera entgegen dem Uhrzeigersinn
+dreht (die Welt dreht sich nach rechts). Das fühlt sich invertiert an:
+man zieht nach rechts, der Cube dreht sich nach rechts statt dass die
+Kamera nach rechts “fliegt”.</p>
+<p>Mit <code>-dx</code>: Maus nach rechts → negativer yaw-Zuwachs →
+Kamera dreht im Uhrzeigersinn → intuitives “ich drehe den Cube mit der
+Maus”-Gefühl.</p>
 <h3 id="trackpad-vs.-mausrad">Trackpad vs. Mausrad</h3>
 <pre class="objc"><code>- (void)scrollWheel:(NSEvent*)event {
     float delta = (float)(event.hasPreciseScrollingDeltas
@@ -2038,53 +2057,53 @@ C-Bibliothek</strong> von Johannes Kuhlmann für glTF 2.0.
 einzigen <code>.h</code>-Datei — kein Build-System-Aufwand, kein
 separates <code>.lib</code>-File.</p>
 <p>Das Muster für single-header Libraries:</p>
-<div class="sourceCode" id="cb93"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb93-1"><a href="#cb93-1" aria-hidden="true" tabindex="-1"></a><span class="co">// In GENAU EINER .mm-Datei (Mesh.mm):</span></span>
-<span id="cb93-2"><a href="#cb93-2" aria-hidden="true" tabindex="-1"></a><span class="pp">#define CGLTF_IMPLEMENTATION   </span><span class="co">// Aktiviert die Implementation</span></span>
-<span id="cb93-3"><a href="#cb93-3" aria-hidden="true" tabindex="-1"></a><span class="pp">#include </span><span class="im">&quot;cgltf.h&quot;</span></span>
-<span id="cb93-4"><a href="#cb93-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb93-5"><a href="#cb93-5" aria-hidden="true" tabindex="-1"></a><span class="co">// In allen anderen Dateien: NUR einbinden, kein IMPLEMENTATION-Macro</span></span>
-<span id="cb93-6"><a href="#cb93-6" aria-hidden="true" tabindex="-1"></a><span class="pp">#include </span><span class="im">&quot;cgltf.h&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb94"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb94-1"><a href="#cb94-1" aria-hidden="true" tabindex="-1"></a><span class="co">// In GENAU EINER .mm-Datei (Mesh.mm):</span></span>
+<span id="cb94-2"><a href="#cb94-2" aria-hidden="true" tabindex="-1"></a><span class="pp">#define CGLTF_IMPLEMENTATION   </span><span class="co">// Aktiviert die Implementation</span></span>
+<span id="cb94-3"><a href="#cb94-3" aria-hidden="true" tabindex="-1"></a><span class="pp">#include </span><span class="im">&quot;cgltf.h&quot;</span></span>
+<span id="cb94-4"><a href="#cb94-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb94-5"><a href="#cb94-5" aria-hidden="true" tabindex="-1"></a><span class="co">// In allen anderen Dateien: NUR einbinden, kein IMPLEMENTATION-Macro</span></span>
+<span id="cb94-6"><a href="#cb94-6" aria-hidden="true" tabindex="-1"></a><span class="pp">#include </span><span class="im">&quot;cgltf.h&quot;</span></span></code></pre></div>
 <p>Würde man <code>CGLTF_IMPLEMENTATION</code> in zwei
 <code>.mm</code>-Dateien setzen: <strong>Linker-Fehler</strong> wegen
 doppelter Symbole — exakt wie bei den metal-cpp Macros in
 <code>MetalImpl.mm</code>.</p>
 <h3 id="cgltf-als-git-submodul">cgltf als Git-Submodul</h3>
-<div class="sourceCode" id="cb94"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb94-1"><a href="#cb94-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> submodule add https://github.com/jkuhlmann/cgltf vendor/cgltf</span></code></pre></div>
+<div class="sourceCode" id="cb95"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb95-1"><a href="#cb95-1" aria-hidden="true" tabindex="-1"></a><span class="fu">git</span> submodule add https://github.com/jkuhlmann/cgltf vendor/cgltf</span></code></pre></div>
 <p>cgltf liegt in <code>vendor/cgltf/cgltf.h</code>. In
 <code>CMakeLists.txt</code> fügen wir <code>vendor/cgltf</code> zum
 Include-Pfad hinzu — damit <code>#include "cgltf.h"</code> überall
 funktioniert.</p>
 <h3 id="die-cgltf-api">Die cgltf API</h3>
-<div class="sourceCode" id="cb95"><pre class="sourceCode c"><code class="sourceCode c"><span id="cb95-1"><a href="#cb95-1" aria-hidden="true" tabindex="-1"></a>cgltf_options options<span class="op">{};</span></span>
-<span id="cb95-2"><a href="#cb95-2" aria-hidden="true" tabindex="-1"></a>cgltf_data<span class="op">*</span>   data <span class="op">=</span> <span class="kw">nullptr</span><span class="op">;</span></span>
-<span id="cb95-3"><a href="#cb95-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-4"><a href="#cb95-4" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 1: JSON-Header parsen (kein Binärdata geladen)</span></span>
-<span id="cb95-5"><a href="#cb95-5" aria-hidden="true" tabindex="-1"></a>cgltf_result result <span class="op">=</span> cgltf_parse_file<span class="op">(&amp;</span>options<span class="op">,</span> <span class="st">&quot;cube.glb&quot;</span><span class="op">,</span> <span class="op">&amp;</span>data<span class="op">);</span></span>
-<span id="cb95-6"><a href="#cb95-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-7"><a href="#cb95-7" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 2: Binäre Buffer-Daten laden (die eigentlichen Vertex-Daten)</span></span>
-<span id="cb95-8"><a href="#cb95-8" aria-hidden="true" tabindex="-1"></a>cgltf_load_buffers<span class="op">(&amp;</span>options<span class="op">,</span> data<span class="op">,</span> <span class="st">&quot;cube.glb&quot;</span><span class="op">);</span></span>
-<span id="cb95-9"><a href="#cb95-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-10"><a href="#cb95-10" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 3: Zugriff auf Mesh-Daten</span></span>
-<span id="cb95-11"><a href="#cb95-11" aria-hidden="true" tabindex="-1"></a>cgltf_mesh<span class="op">*</span>      mesh <span class="op">=</span> <span class="op">&amp;</span>data<span class="op">-&gt;</span>meshes<span class="op">[</span><span class="dv">0</span><span class="op">];</span></span>
-<span id="cb95-12"><a href="#cb95-12" aria-hidden="true" tabindex="-1"></a>cgltf_primitive<span class="op">*</span> prim <span class="op">=</span> <span class="op">&amp;</span>mesh<span class="op">-&gt;</span>primitives<span class="op">[</span><span class="dv">0</span><span class="op">];</span></span>
-<span id="cb95-13"><a href="#cb95-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-14"><a href="#cb95-14" aria-hidden="true" tabindex="-1"></a><span class="co">// Attribute lesen</span></span>
-<span id="cb95-15"><a href="#cb95-15" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> <span class="op">(</span><span class="dt">size_t</span> i <span class="op">=</span> <span class="dv">0</span><span class="op">;</span> i <span class="op">&lt;</span> prim<span class="op">-&gt;</span>attributes_count<span class="op">;</span> <span class="op">++</span>i<span class="op">)</span> <span class="op">{</span></span>
-<span id="cb95-16"><a href="#cb95-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(</span>prim<span class="op">-&gt;</span>attributes<span class="op">[</span>i<span class="op">].</span>type <span class="op">==</span> cgltf_attribute_type_position<span class="op">)</span></span>
-<span id="cb95-17"><a href="#cb95-17" aria-hidden="true" tabindex="-1"></a>        posAcc <span class="op">=</span> prim<span class="op">-&gt;</span>attributes<span class="op">[</span>i<span class="op">].</span>data<span class="op">;</span>  <span class="co">// cgltf_accessor*</span></span>
-<span id="cb95-18"><a href="#cb95-18" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
-<span id="cb95-19"><a href="#cb95-19" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-20"><a href="#cb95-20" aria-hidden="true" tabindex="-1"></a><span class="co">// Accessor: typsicherer Zugriff auf rohe Bytes</span></span>
-<span id="cb95-21"><a href="#cb95-21" aria-hidden="true" tabindex="-1"></a><span class="dt">float</span> tmp<span class="op">[</span><span class="dv">3</span><span class="op">];</span></span>
-<span id="cb95-22"><a href="#cb95-22" aria-hidden="true" tabindex="-1"></a>cgltf_accessor_read_float<span class="op">(</span>posAcc<span class="op">,</span> vertexIndex<span class="op">,</span> tmp<span class="op">,</span> <span class="dv">3</span><span class="op">);</span></span>
-<span id="cb95-23"><a href="#cb95-23" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-24"><a href="#cb95-24" aria-hidden="true" tabindex="-1"></a><span class="co">// Index-Daten</span></span>
-<span id="cb95-25"><a href="#cb95-25" aria-hidden="true" tabindex="-1"></a><span class="dt">size_t</span> idx <span class="op">=</span> cgltf_accessor_read_index<span class="op">(</span>prim<span class="op">-&gt;</span>indices<span class="op">,</span> indexIndex<span class="op">);</span></span>
-<span id="cb95-26"><a href="#cb95-26" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb95-27"><a href="#cb95-27" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 4: Freigeben</span></span>
-<span id="cb95-28"><a href="#cb95-28" aria-hidden="true" tabindex="-1"></a>cgltf_free<span class="op">(</span>data<span class="op">);</span></span></code></pre></div>
+<div class="sourceCode" id="cb96"><pre class="sourceCode c"><code class="sourceCode c"><span id="cb96-1"><a href="#cb96-1" aria-hidden="true" tabindex="-1"></a>cgltf_options options<span class="op">{};</span></span>
+<span id="cb96-2"><a href="#cb96-2" aria-hidden="true" tabindex="-1"></a>cgltf_data<span class="op">*</span>   data <span class="op">=</span> <span class="kw">nullptr</span><span class="op">;</span></span>
+<span id="cb96-3"><a href="#cb96-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-4"><a href="#cb96-4" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 1: JSON-Header parsen (kein Binärdata geladen)</span></span>
+<span id="cb96-5"><a href="#cb96-5" aria-hidden="true" tabindex="-1"></a>cgltf_result result <span class="op">=</span> cgltf_parse_file<span class="op">(&amp;</span>options<span class="op">,</span> <span class="st">&quot;cube.glb&quot;</span><span class="op">,</span> <span class="op">&amp;</span>data<span class="op">);</span></span>
+<span id="cb96-6"><a href="#cb96-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-7"><a href="#cb96-7" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 2: Binäre Buffer-Daten laden (die eigentlichen Vertex-Daten)</span></span>
+<span id="cb96-8"><a href="#cb96-8" aria-hidden="true" tabindex="-1"></a>cgltf_load_buffers<span class="op">(&amp;</span>options<span class="op">,</span> data<span class="op">,</span> <span class="st">&quot;cube.glb&quot;</span><span class="op">);</span></span>
+<span id="cb96-9"><a href="#cb96-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-10"><a href="#cb96-10" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 3: Zugriff auf Mesh-Daten</span></span>
+<span id="cb96-11"><a href="#cb96-11" aria-hidden="true" tabindex="-1"></a>cgltf_mesh<span class="op">*</span>      mesh <span class="op">=</span> <span class="op">&amp;</span>data<span class="op">-&gt;</span>meshes<span class="op">[</span><span class="dv">0</span><span class="op">];</span></span>
+<span id="cb96-12"><a href="#cb96-12" aria-hidden="true" tabindex="-1"></a>cgltf_primitive<span class="op">*</span> prim <span class="op">=</span> <span class="op">&amp;</span>mesh<span class="op">-&gt;</span>primitives<span class="op">[</span><span class="dv">0</span><span class="op">];</span></span>
+<span id="cb96-13"><a href="#cb96-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-14"><a href="#cb96-14" aria-hidden="true" tabindex="-1"></a><span class="co">// Attribute lesen</span></span>
+<span id="cb96-15"><a href="#cb96-15" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> <span class="op">(</span><span class="dt">size_t</span> i <span class="op">=</span> <span class="dv">0</span><span class="op">;</span> i <span class="op">&lt;</span> prim<span class="op">-&gt;</span>attributes_count<span class="op">;</span> <span class="op">++</span>i<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb96-16"><a href="#cb96-16" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(</span>prim<span class="op">-&gt;</span>attributes<span class="op">[</span>i<span class="op">].</span>type <span class="op">==</span> cgltf_attribute_type_position<span class="op">)</span></span>
+<span id="cb96-17"><a href="#cb96-17" aria-hidden="true" tabindex="-1"></a>        posAcc <span class="op">=</span> prim<span class="op">-&gt;</span>attributes<span class="op">[</span>i<span class="op">].</span>data<span class="op">;</span>  <span class="co">// cgltf_accessor*</span></span>
+<span id="cb96-18"><a href="#cb96-18" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb96-19"><a href="#cb96-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-20"><a href="#cb96-20" aria-hidden="true" tabindex="-1"></a><span class="co">// Accessor: typsicherer Zugriff auf rohe Bytes</span></span>
+<span id="cb96-21"><a href="#cb96-21" aria-hidden="true" tabindex="-1"></a><span class="dt">float</span> tmp<span class="op">[</span><span class="dv">3</span><span class="op">];</span></span>
+<span id="cb96-22"><a href="#cb96-22" aria-hidden="true" tabindex="-1"></a>cgltf_accessor_read_float<span class="op">(</span>posAcc<span class="op">,</span> vertexIndex<span class="op">,</span> tmp<span class="op">,</span> <span class="dv">3</span><span class="op">);</span></span>
+<span id="cb96-23"><a href="#cb96-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-24"><a href="#cb96-24" aria-hidden="true" tabindex="-1"></a><span class="co">// Index-Daten</span></span>
+<span id="cb96-25"><a href="#cb96-25" aria-hidden="true" tabindex="-1"></a><span class="dt">size_t</span> idx <span class="op">=</span> cgltf_accessor_read_index<span class="op">(</span>prim<span class="op">-&gt;</span>indices<span class="op">,</span> indexIndex<span class="op">);</span></span>
+<span id="cb96-26"><a href="#cb96-26" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb96-27"><a href="#cb96-27" aria-hidden="true" tabindex="-1"></a><span class="co">// Schritt 4: Freigeben</span></span>
+<span id="cb96-28"><a href="#cb96-28" aria-hidden="true" tabindex="-1"></a>cgltf_free<span class="op">(</span>data<span class="op">);</span></span></code></pre></div>
 <p>Ein <strong>Accessor</strong> ist cgltfs typsicheres Fenster in die
 rohen Bytes des Binary Buffers. Er beschreibt: welcher Typ
 (<code>FLOAT</code>, <code>UNSIGNED_SHORT</code>…), wie viele
@@ -2121,20 +2140,20 @@ Speicherersparnis</strong>.</p>
 hintereinander verarbeitet wird, kommt das Ergebnis aus dem Cache — kein
 zweiter Vertex-Shader-Aufruf nötig.</p>
 <h3 id="metal-index-buffer-api">Metal Index Buffer API</h3>
-<div class="sourceCode" id="cb97"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb97-1"><a href="#cb97-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Buffer erstellen</span></span>
-<span id="cb97-2"><a href="#cb97-2" aria-hidden="true" tabindex="-1"></a><span class="va">m_indexBuffer</span> <span class="op">=</span> device<span class="op">-&gt;</span>newBuffer<span class="op">(</span></span>
-<span id="cb97-3"><a href="#cb97-3" aria-hidden="true" tabindex="-1"></a>    indices<span class="op">.</span>data<span class="op">(),</span>                      <span class="co">// uint32_t Array</span></span>
-<span id="cb97-4"><a href="#cb97-4" aria-hidden="true" tabindex="-1"></a>    indices<span class="op">.</span>size<span class="op">()</span> <span class="op">*</span> <span class="kw">sizeof</span><span class="op">(</span><span class="dt">uint32_t</span><span class="op">),</span>   <span class="co">// Byte-Größe</span></span>
-<span id="cb97-5"><a href="#cb97-5" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>ResourceStorageModeShared<span class="op">);</span></span>
-<span id="cb97-6"><a href="#cb97-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb97-7"><a href="#cb97-7" aria-hidden="true" tabindex="-1"></a><span class="co">// Draw Call mit Index Buffer</span></span>
-<span id="cb97-8"><a href="#cb97-8" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>drawIndexedPrimitives<span class="op">(</span></span>
-<span id="cb97-9"><a href="#cb97-9" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>PrimitiveType<span class="op">::</span>PrimitiveTypeTriangle<span class="op">,</span>  <span class="co">// Primitiv-Typ</span></span>
-<span id="cb97-10"><a href="#cb97-10" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_indexCount</span><span class="op">,</span>                               <span class="co">// Anzahl Indices</span></span>
-<span id="cb97-11"><a href="#cb97-11" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>IndexType<span class="op">::</span>IndexTypeUInt32<span class="op">,</span>            <span class="co">// Index-Typ (16 oder 32 Bit)</span></span>
-<span id="cb97-12"><a href="#cb97-12" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_indexBuffer</span><span class="op">,</span>                              <span class="co">// Der Index Buffer</span></span>
-<span id="cb97-13"><a href="#cb97-13" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span><span class="op">);</span>                                         <span class="co">// Byte-Offset in den Buffer</span></span></code></pre></div>
+<div class="sourceCode" id="cb98"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb98-1"><a href="#cb98-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Buffer erstellen</span></span>
+<span id="cb98-2"><a href="#cb98-2" aria-hidden="true" tabindex="-1"></a><span class="va">m_indexBuffer</span> <span class="op">=</span> device<span class="op">-&gt;</span>newBuffer<span class="op">(</span></span>
+<span id="cb98-3"><a href="#cb98-3" aria-hidden="true" tabindex="-1"></a>    indices<span class="op">.</span>data<span class="op">(),</span>                      <span class="co">// uint32_t Array</span></span>
+<span id="cb98-4"><a href="#cb98-4" aria-hidden="true" tabindex="-1"></a>    indices<span class="op">.</span>size<span class="op">()</span> <span class="op">*</span> <span class="kw">sizeof</span><span class="op">(</span><span class="dt">uint32_t</span><span class="op">),</span>   <span class="co">// Byte-Größe</span></span>
+<span id="cb98-5"><a href="#cb98-5" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>ResourceStorageModeShared<span class="op">);</span></span>
+<span id="cb98-6"><a href="#cb98-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb98-7"><a href="#cb98-7" aria-hidden="true" tabindex="-1"></a><span class="co">// Draw Call mit Index Buffer</span></span>
+<span id="cb98-8"><a href="#cb98-8" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>drawIndexedPrimitives<span class="op">(</span></span>
+<span id="cb98-9"><a href="#cb98-9" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>PrimitiveType<span class="op">::</span>PrimitiveTypeTriangle<span class="op">,</span>  <span class="co">// Primitiv-Typ</span></span>
+<span id="cb98-10"><a href="#cb98-10" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_indexCount</span><span class="op">,</span>                               <span class="co">// Anzahl Indices</span></span>
+<span id="cb98-11"><a href="#cb98-11" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>IndexType<span class="op">::</span>IndexTypeUInt32<span class="op">,</span>            <span class="co">// Index-Typ (16 oder 32 Bit)</span></span>
+<span id="cb98-12"><a href="#cb98-12" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_indexBuffer</span><span class="op">,</span>                              <span class="co">// Der Index Buffer</span></span>
+<span id="cb98-13"><a href="#cb98-13" aria-hidden="true" tabindex="-1"></a>    <span class="dv">0</span><span class="op">);</span>                                         <span class="co">// Byte-Offset in den Buffer</span></span></code></pre></div>
 <p>Wir nutzen <code>uint32_t</code> (32-Bit Indices). Alternativ wäre
 <code>uint16_t</code> (16-Bit, max 65535 Vertices). Für den Khronos Box
 Mesh (24 Vertices) würde 16-Bit reichen, aber <code>uint32_t</code> ist
@@ -2151,21 +2170,21 @@ verschiedene Formate haben (<code>UNSIGNED_BYTE</code>,
 <h2 id="das-neue-vertex-layout">33. Das neue Vertex-Layout</h2>
 <h3 id="warum-normal-statt-color">Warum Normal statt Color?</h3>
 <p>In Milestone 1+2 hatten wir:</p>
-<div class="sourceCode" id="cb98"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb98-1"><a href="#cb98-1" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> Vertex <span class="op">{</span></span>
-<span id="cb98-2"><a href="#cb98-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3 position<span class="op">;</span>   <span class="co">// 12 Bytes</span></span>
-<span id="cb98-3"><a href="#cb98-3" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4 color<span class="op">;</span>      <span class="co">// 16 Bytes  ← weg</span></span>
-<span id="cb98-4"><a href="#cb98-4" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<div class="sourceCode" id="cb99"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb99-1"><a href="#cb99-1" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> Vertex <span class="op">{</span></span>
+<span id="cb99-2"><a href="#cb99-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3 position<span class="op">;</span>   <span class="co">// 12 Bytes</span></span>
+<span id="cb99-3"><a href="#cb99-3" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4 color<span class="op">;</span>      <span class="co">// 16 Bytes  ← weg</span></span>
+<span id="cb99-4"><a href="#cb99-4" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
 <p>Farben macht ein Lighting-Modell überflüssig: wir berechnen die Farbe
 aus Beleuchtung + Materialfarbe. Dafür brauchen wir die
 <strong>Oberflächennormale</strong> — den Vektor der senkrecht zur
 Fläche zeigt.</p>
-<div class="sourceCode" id="cb99"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb99-1"><a href="#cb99-1" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> Vertex <span class="op">{</span></span>
-<span id="cb99-2"><a href="#cb99-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3 position<span class="op">;</span>   <span class="co">// 12 Bytes</span></span>
-<span id="cb99-3"><a href="#cb99-3" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3 normal<span class="op">;</span>     <span class="co">// 12 Bytes  ← neu</span></span>
-<span id="cb99-4"><a href="#cb99-4" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
-<span id="cb99-5"><a href="#cb99-5" aria-hidden="true" tabindex="-1"></a><span class="co">// Gesamtgröße: 24 Bytes pro Vertex</span></span></code></pre></div>
+<div class="sourceCode" id="cb100"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb100-1"><a href="#cb100-1" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> Vertex <span class="op">{</span></span>
+<span id="cb100-2"><a href="#cb100-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3 position<span class="op">;</span>   <span class="co">// 12 Bytes</span></span>
+<span id="cb100-3"><a href="#cb100-3" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3 normal<span class="op">;</span>     <span class="co">// 12 Bytes  ← neu</span></span>
+<span id="cb100-4"><a href="#cb100-4" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span>
+<span id="cb100-5"><a href="#cb100-5" aria-hidden="true" tabindex="-1"></a><span class="co">// Gesamtgröße: 24 Bytes pro Vertex</span></span></code></pre></div>
 <h3 id="was-ist-eine-normale">Was ist eine Normale?</h3>
 <p>Eine <strong>Oberflächennormale</strong> ist ein Einheitsvektor
 (Länge = 1) der senkrecht zur Oberfläche eines Dreiecks zeigt. Sie wird
@@ -2189,33 +2208,33 @@ sieht weich aus statt facettiert.</p>
 <hr />
 <h2 id="mesh.hpp-mesh.mm">34. Mesh.hpp / Mesh.mm</h2>
 <h3 id="mesh.hpp-das-interface">Mesh.hpp — Das Interface</h3>
-<div class="sourceCode" id="cb101"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb101-1"><a href="#cb101-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Mesh <span class="op">{</span></span>
-<span id="cb101-2"><a href="#cb101-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
-<span id="cb101-3"><a href="#cb101-3" aria-hidden="true" tabindex="-1"></a>    <span class="at">static</span> Mesh<span class="op">*</span> loadGLB<span class="op">(</span>MTL<span class="op">::</span>Device<span class="op">*</span> device<span class="op">,</span> <span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> path<span class="op">);</span></span>
-<span id="cb101-4"><a href="#cb101-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">~</span>Mesh<span class="op">();</span></span>
-<span id="cb101-5"><a href="#cb101-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> draw<span class="op">(</span>MTL<span class="op">::</span>RenderCommandEncoder<span class="op">*</span> enc<span class="op">)</span> <span class="at">const</span><span class="op">;</span></span>
-<span id="cb101-6"><a href="#cb101-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> isValid<span class="op">()</span> <span class="at">const</span> <span class="op">{</span> <span class="cf">return</span> <span class="va">m_vertexBuffer</span> <span class="op">&amp;&amp;</span> <span class="va">m_indexBuffer</span><span class="op">;</span> <span class="op">}</span></span>
-<span id="cb101-7"><a href="#cb101-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb101-8"><a href="#cb101-8" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span><span class="op">:</span></span>
-<span id="cb101-9"><a href="#cb101-9" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>Buffer<span class="op">*</span> <span class="va">m_vertexBuffer</span> <span class="op">{</span> <span class="kw">nullptr</span> <span class="op">};</span></span>
-<span id="cb101-10"><a href="#cb101-10" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>Buffer<span class="op">*</span> <span class="va">m_indexBuffer</span>  <span class="op">{</span> <span class="kw">nullptr</span> <span class="op">};</span></span>
-<span id="cb101-11"><a href="#cb101-11" aria-hidden="true" tabindex="-1"></a>    <span class="dt">uint32_t</span>     <span class="va">m_indexCount</span>   <span class="op">{</span> <span class="dv">0</span> <span class="op">};</span></span>
-<span id="cb101-12"><a href="#cb101-12" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<div class="sourceCode" id="cb102"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb102-1"><a href="#cb102-1" aria-hidden="true" tabindex="-1"></a><span class="kw">class</span> Mesh <span class="op">{</span></span>
+<span id="cb102-2"><a href="#cb102-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span><span class="op">:</span></span>
+<span id="cb102-3"><a href="#cb102-3" aria-hidden="true" tabindex="-1"></a>    <span class="at">static</span> Mesh<span class="op">*</span> loadGLB<span class="op">(</span>MTL<span class="op">::</span>Device<span class="op">*</span> device<span class="op">,</span> <span class="at">const</span> <span class="bu">std::</span>string<span class="op">&amp;</span> path<span class="op">);</span></span>
+<span id="cb102-4"><a href="#cb102-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">~</span>Mesh<span class="op">();</span></span>
+<span id="cb102-5"><a href="#cb102-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">void</span> draw<span class="op">(</span>MTL<span class="op">::</span>RenderCommandEncoder<span class="op">*</span> enc<span class="op">)</span> <span class="at">const</span><span class="op">;</span></span>
+<span id="cb102-6"><a href="#cb102-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">bool</span> isValid<span class="op">()</span> <span class="at">const</span> <span class="op">{</span> <span class="cf">return</span> <span class="va">m_vertexBuffer</span> <span class="op">&amp;&amp;</span> <span class="va">m_indexBuffer</span><span class="op">;</span> <span class="op">}</span></span>
+<span id="cb102-7"><a href="#cb102-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb102-8"><a href="#cb102-8" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span><span class="op">:</span></span>
+<span id="cb102-9"><a href="#cb102-9" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>Buffer<span class="op">*</span> <span class="va">m_vertexBuffer</span> <span class="op">{</span> <span class="kw">nullptr</span> <span class="op">};</span></span>
+<span id="cb102-10"><a href="#cb102-10" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>Buffer<span class="op">*</span> <span class="va">m_indexBuffer</span>  <span class="op">{</span> <span class="kw">nullptr</span> <span class="op">};</span></span>
+<span id="cb102-11"><a href="#cb102-11" aria-hidden="true" tabindex="-1"></a>    <span class="dt">uint32_t</span>     <span class="va">m_indexCount</span>   <span class="op">{</span> <span class="dv">0</span> <span class="op">};</span></span>
+<span id="cb102-12"><a href="#cb102-12" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
 <p><code>loadGLB</code> ist eine <strong>static factory method</strong>
 — sie erstellt ein Mesh-Objekt und gibt einen rohen Pointer zurück (oder
 <code>nullptr</code> bei Fehler). Der Renderer ist Owner und löscht das
 Mesh im Destruktor via <code>delete m_mesh</code>.</p>
 <h3 id="mesh.mm-pfad-auflösung">Mesh.mm — Pfad-Auflösung</h3>
-<div class="sourceCode" id="cb102"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb102-1"><a href="#cb102-1" aria-hidden="true" tabindex="-1"></a><span class="at">static</span> <span class="bu">std::</span>string executableDir<span class="op">()</span> <span class="op">{</span></span>
-<span id="cb102-2"><a href="#cb102-2" aria-hidden="true" tabindex="-1"></a>    <span class="dt">char</span> buf<span class="op">[</span><span class="dv">4096</span><span class="op">];</span></span>
-<span id="cb102-3"><a href="#cb102-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">uint32_t</span> size <span class="op">=</span> <span class="kw">sizeof</span><span class="op">(</span>buf<span class="op">);</span></span>
-<span id="cb102-4"><a href="#cb102-4" aria-hidden="true" tabindex="-1"></a>    _NSGetExecutablePath<span class="op">(</span>buf<span class="op">,</span> <span class="op">&amp;</span>size<span class="op">);</span></span>
-<span id="cb102-5"><a href="#cb102-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string path<span class="op">(</span>buf<span class="op">);</span></span>
-<span id="cb102-6"><a href="#cb102-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">auto</span> pos <span class="op">=</span> path<span class="op">.</span>rfind<span class="op">(</span><span class="ch">&#39;/&#39;</span><span class="op">);</span></span>
-<span id="cb102-7"><a href="#cb102-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="op">(</span>pos <span class="op">!=</span> <span class="bu">std::</span>string::npos<span class="op">)</span> <span class="op">?</span> path<span class="op">.</span>substr<span class="op">(</span><span class="dv">0</span><span class="op">,</span> pos<span class="op">)</span> <span class="op">:</span> <span class="st">&quot;.&quot;</span><span class="op">;</span></span>
-<span id="cb102-8"><a href="#cb102-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb103"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb103-1"><a href="#cb103-1" aria-hidden="true" tabindex="-1"></a><span class="at">static</span> <span class="bu">std::</span>string executableDir<span class="op">()</span> <span class="op">{</span></span>
+<span id="cb103-2"><a href="#cb103-2" aria-hidden="true" tabindex="-1"></a>    <span class="dt">char</span> buf<span class="op">[</span><span class="dv">4096</span><span class="op">];</span></span>
+<span id="cb103-3"><a href="#cb103-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">uint32_t</span> size <span class="op">=</span> <span class="kw">sizeof</span><span class="op">(</span>buf<span class="op">);</span></span>
+<span id="cb103-4"><a href="#cb103-4" aria-hidden="true" tabindex="-1"></a>    _NSGetExecutablePath<span class="op">(</span>buf<span class="op">,</span> <span class="op">&amp;</span>size<span class="op">);</span></span>
+<span id="cb103-5"><a href="#cb103-5" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string path<span class="op">(</span>buf<span class="op">);</span></span>
+<span id="cb103-6"><a href="#cb103-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">auto</span> pos <span class="op">=</span> path<span class="op">.</span>rfind<span class="op">(</span><span class="ch">&#39;/&#39;</span><span class="op">);</span></span>
+<span id="cb103-7"><a href="#cb103-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="op">(</span>pos <span class="op">!=</span> <span class="bu">std::</span>string::npos<span class="op">)</span> <span class="op">?</span> path<span class="op">.</span>substr<span class="op">(</span><span class="dv">0</span><span class="op">,</span> pos<span class="op">)</span> <span class="op">:</span> <span class="st">&quot;.&quot;</span><span class="op">;</span></span>
+<span id="cb103-8"><a href="#cb103-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p>Wenn das Programm aus einem anderen Verzeichnis gestartet wird (z.B.
 <code>./build/metal4engine</code>), würde ein relativer Pfad wie
 <code>"assets/cube.glb"</code> falsch aufgelöst. Wir holen den absoluten
@@ -2226,22 +2245,22 @@ Pfad zur Binary und bauen den Asset-Pfad relativ dazu.</p>
 schneidet den Dateinamen ab.</p>
 <h3 id="mesh.mm-zwei-schritt-pfad-fallback">Mesh.mm — Zwei-Schritt
 Pfad-Fallback</h3>
-<div class="sourceCode" id="cb103"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb103-1"><a href="#cb103-1" aria-hidden="true" tabindex="-1"></a>cgltf_result result <span class="op">=</span> cgltf_parse_file<span class="op">(&amp;</span>options<span class="op">,</span> path<span class="op">.</span>c_str<span class="op">(),</span> <span class="op">&amp;</span>data<span class="op">);</span></span>
-<span id="cb103-2"><a href="#cb103-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span>result <span class="op">!=</span> cgltf_result_success<span class="op">)</span> <span class="op">{</span></span>
-<span id="cb103-3"><a href="#cb103-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string exePath <span class="op">=</span> executableDir<span class="op">()</span> <span class="op">+</span> <span class="st">&quot;/&quot;</span> <span class="op">+</span> path<span class="op">;</span></span>
-<span id="cb103-4"><a href="#cb103-4" aria-hidden="true" tabindex="-1"></a>    result <span class="op">=</span> cgltf_parse_file<span class="op">(&amp;</span>options<span class="op">,</span> exePath<span class="op">.</span>c_str<span class="op">(),</span> <span class="op">&amp;</span>data<span class="op">);</span></span>
-<span id="cb103-5"><a href="#cb103-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb104"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb104-1"><a href="#cb104-1" aria-hidden="true" tabindex="-1"></a>cgltf_result result <span class="op">=</span> cgltf_parse_file<span class="op">(&amp;</span>options<span class="op">,</span> path<span class="op">.</span>c_str<span class="op">(),</span> <span class="op">&amp;</span>data<span class="op">);</span></span>
+<span id="cb104-2"><a href="#cb104-2" aria-hidden="true" tabindex="-1"></a><span class="cf">if</span> <span class="op">(</span>result <span class="op">!=</span> cgltf_result_success<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb104-3"><a href="#cb104-3" aria-hidden="true" tabindex="-1"></a>    <span class="bu">std::</span>string exePath <span class="op">=</span> executableDir<span class="op">()</span> <span class="op">+</span> <span class="st">&quot;/&quot;</span> <span class="op">+</span> path<span class="op">;</span></span>
+<span id="cb104-4"><a href="#cb104-4" aria-hidden="true" tabindex="-1"></a>    result <span class="op">=</span> cgltf_parse_file<span class="op">(&amp;</span>options<span class="op">,</span> exePath<span class="op">.</span>c_str<span class="op">(),</span> <span class="op">&amp;</span>data<span class="op">);</span></span>
+<span id="cb104-5"><a href="#cb104-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p>Wir versuchen zuerst den Pfad as-is (falls er absolut ist oder der
 CWD stimmt). Wenn das fehlschlägt, kombinieren wir executableDir +
 relativen Pfad. Das gleiche Muster für
 <code>cgltf_load_buffers</code>.</p>
 <h3 id="mesh.mm-float-zugriff-auf-simd-vektoren">Mesh.mm — Float-Zugriff
 auf simd-Vektoren</h3>
-<div class="sourceCode" id="cb104"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb104-1"><a href="#cb104-1" aria-hidden="true" tabindex="-1"></a><span class="dt">float</span> tmp<span class="op">[</span><span class="dv">3</span><span class="op">];</span></span>
-<span id="cb104-2"><a href="#cb104-2" aria-hidden="true" tabindex="-1"></a>cgltf_accessor_read_float<span class="op">(</span>posAcc<span class="op">,</span> i<span class="op">,</span> tmp<span class="op">,</span> <span class="dv">3</span><span class="op">);</span></span>
-<span id="cb104-3"><a href="#cb104-3" aria-hidden="true" tabindex="-1"></a>vertices<span class="op">[</span>i<span class="op">].</span>position <span class="op">=</span> simd<span class="op">::</span>float3<span class="op">{</span> tmp<span class="op">[</span><span class="dv">0</span><span class="op">],</span> tmp<span class="op">[</span><span class="dv">1</span><span class="op">],</span> tmp<span class="op">[</span><span class="dv">2</span><span class="op">]</span> <span class="op">};</span></span></code></pre></div>
+<div class="sourceCode" id="cb105"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb105-1"><a href="#cb105-1" aria-hidden="true" tabindex="-1"></a><span class="dt">float</span> tmp<span class="op">[</span><span class="dv">3</span><span class="op">];</span></span>
+<span id="cb105-2"><a href="#cb105-2" aria-hidden="true" tabindex="-1"></a>cgltf_accessor_read_float<span class="op">(</span>posAcc<span class="op">,</span> i<span class="op">,</span> tmp<span class="op">,</span> <span class="dv">3</span><span class="op">);</span></span>
+<span id="cb105-3"><a href="#cb105-3" aria-hidden="true" tabindex="-1"></a>vertices<span class="op">[</span>i<span class="op">].</span>position <span class="op">=</span> simd<span class="op">::</span>float3<span class="op">{</span> tmp<span class="op">[</span><span class="dv">0</span><span class="op">],</span> tmp<span class="op">[</span><span class="dv">1</span><span class="op">],</span> tmp<span class="op">[</span><span class="dv">2</span><span class="op">]</span> <span class="op">};</span></span></code></pre></div>
 <p>Man könnte erwarten:
 <code>cgltf_accessor_read_float(posAcc, i, &amp;vertices[i].position.x, 3)</code>.
 Das geht <strong>nicht</strong> — <code>simd::float3</code> ist ein
@@ -2249,16 +2268,16 @@ SIMD-Typ dessen Komponenten nicht adressierbar sind (sie liegen in
 SIMD-Registern). Deshalb lesen wir in ein temporäres C-Array und
 konstruieren dann den <code>simd::float3</code>.</p>
 <h3 id="mesh.mm-draw">Mesh.mm — draw()</h3>
-<div class="sourceCode" id="cb105"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb105-1"><a href="#cb105-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Mesh<span class="op">::</span>draw<span class="op">(</span>MTL<span class="op">::</span>RenderCommandEncoder<span class="op">*</span> enc<span class="op">)</span> <span class="at">const</span> <span class="op">{</span></span>
-<span id="cb105-2"><a href="#cb105-2" aria-hidden="true" tabindex="-1"></a>    enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span><span class="va">m_vertexBuffer</span><span class="op">,</span> <span class="dv">0</span><span class="op">,</span> <span class="dv">0</span><span class="op">);</span></span>
-<span id="cb105-3"><a href="#cb105-3" aria-hidden="true" tabindex="-1"></a>    enc<span class="op">-&gt;</span>drawIndexedPrimitives<span class="op">(</span></span>
-<span id="cb105-4"><a href="#cb105-4" aria-hidden="true" tabindex="-1"></a>        MTL<span class="op">::</span>PrimitiveType<span class="op">::</span>PrimitiveTypeTriangle<span class="op">,</span></span>
-<span id="cb105-5"><a href="#cb105-5" aria-hidden="true" tabindex="-1"></a>        <span class="va">m_indexCount</span><span class="op">,</span></span>
-<span id="cb105-6"><a href="#cb105-6" aria-hidden="true" tabindex="-1"></a>        MTL<span class="op">::</span>IndexType<span class="op">::</span>IndexTypeUInt32<span class="op">,</span></span>
-<span id="cb105-7"><a href="#cb105-7" aria-hidden="true" tabindex="-1"></a>        <span class="va">m_indexBuffer</span><span class="op">,</span></span>
-<span id="cb105-8"><a href="#cb105-8" aria-hidden="true" tabindex="-1"></a>        <span class="dv">0</span><span class="op">);</span></span>
-<span id="cb105-9"><a href="#cb105-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb106"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb106-1"><a href="#cb106-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Mesh<span class="op">::</span>draw<span class="op">(</span>MTL<span class="op">::</span>RenderCommandEncoder<span class="op">*</span> enc<span class="op">)</span> <span class="at">const</span> <span class="op">{</span></span>
+<span id="cb106-2"><a href="#cb106-2" aria-hidden="true" tabindex="-1"></a>    enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span><span class="va">m_vertexBuffer</span><span class="op">,</span> <span class="dv">0</span><span class="op">,</span> <span class="dv">0</span><span class="op">);</span></span>
+<span id="cb106-3"><a href="#cb106-3" aria-hidden="true" tabindex="-1"></a>    enc<span class="op">-&gt;</span>drawIndexedPrimitives<span class="op">(</span></span>
+<span id="cb106-4"><a href="#cb106-4" aria-hidden="true" tabindex="-1"></a>        MTL<span class="op">::</span>PrimitiveType<span class="op">::</span>PrimitiveTypeTriangle<span class="op">,</span></span>
+<span id="cb106-5"><a href="#cb106-5" aria-hidden="true" tabindex="-1"></a>        <span class="va">m_indexCount</span><span class="op">,</span></span>
+<span id="cb106-6"><a href="#cb106-6" aria-hidden="true" tabindex="-1"></a>        MTL<span class="op">::</span>IndexType<span class="op">::</span>IndexTypeUInt32<span class="op">,</span></span>
+<span id="cb106-7"><a href="#cb106-7" aria-hidden="true" tabindex="-1"></a>        <span class="va">m_indexBuffer</span><span class="op">,</span></span>
+<span id="cb106-8"><a href="#cb106-8" aria-hidden="true" tabindex="-1"></a>        <span class="dv">0</span><span class="op">);</span></span>
+<span id="cb106-9"><a href="#cb106-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p><code>draw()</code> macht genau zwei Dinge: Vertex Buffer binden
 (Slot 0) und indizierten Draw Call. Der Uniform Buffer (Slot 1) wird
 <strong>außerhalb</strong> von <code>draw()</code> gesetzt (in
@@ -2286,25 +2305,25 @@ Scale des Nodes selbst.</p>
 <p><strong>Reihenfolge</strong>: Scale zuerst, dann Rotation, dann
 Translation (TRS-Konvention). Das ist die Reihenfolge in der glTF-Nodes
 gespeichert sind.</p>
-<div class="sourceCode" id="cb108"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb108-1"><a href="#cb108-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> updateWorldMatrix<span class="op">(</span><span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> parentWorld <span class="op">=</span> matrix_identity_float4x4<span class="op">)</span> <span class="op">{</span></span>
-<span id="cb108-2"><a href="#cb108-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 local <span class="op">=</span></span>
-<span id="cb108-3"><a href="#cb108-3" aria-hidden="true" tabindex="-1"></a>        math<span class="op">::</span>translation<span class="op">(</span>translation<span class="op">.</span>x<span class="op">,</span> translation<span class="op">.</span>y<span class="op">,</span> translation<span class="op">.</span>z<span class="op">)</span></span>
-<span id="cb108-4"><a href="#cb108-4" aria-hidden="true" tabindex="-1"></a>        <span class="op">*</span> math<span class="op">::</span>rotation<span class="op">(</span>rotationAngle<span class="op">,</span> rotationAxis<span class="op">)</span></span>
-<span id="cb108-5"><a href="#cb108-5" aria-hidden="true" tabindex="-1"></a>        <span class="op">*</span> math<span class="op">::</span>scale<span class="op">(</span>uniformScale<span class="op">);</span></span>
-<span id="cb108-6"><a href="#cb108-6" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb108-7"><a href="#cb108-7" aria-hidden="true" tabindex="-1"></a>    worldMatrix <span class="op">=</span> parentWorld <span class="op">*</span> local<span class="op">;</span></span>
-<span id="cb108-8"><a href="#cb108-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb108-9"><a href="#cb108-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> <span class="op">(</span><span class="kw">auto</span><span class="op">&amp;</span> child <span class="op">:</span> <span class="va">m_children</span><span class="op">)</span></span>
-<span id="cb108-10"><a href="#cb108-10" aria-hidden="true" tabindex="-1"></a>        child<span class="op">-&gt;</span>updateWorldMatrix<span class="op">(</span>worldMatrix<span class="op">);</span></span>
-<span id="cb108-11"><a href="#cb108-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb109"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb109-1"><a href="#cb109-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> updateWorldMatrix<span class="op">(</span><span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> parentWorld <span class="op">=</span> matrix_identity_float4x4<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb109-2"><a href="#cb109-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 local <span class="op">=</span></span>
+<span id="cb109-3"><a href="#cb109-3" aria-hidden="true" tabindex="-1"></a>        math<span class="op">::</span>translation<span class="op">(</span>translation<span class="op">.</span>x<span class="op">,</span> translation<span class="op">.</span>y<span class="op">,</span> translation<span class="op">.</span>z<span class="op">)</span></span>
+<span id="cb109-4"><a href="#cb109-4" aria-hidden="true" tabindex="-1"></a>        <span class="op">*</span> math<span class="op">::</span>rotation<span class="op">(</span>rotationAngle<span class="op">,</span> rotationAxis<span class="op">)</span></span>
+<span id="cb109-5"><a href="#cb109-5" aria-hidden="true" tabindex="-1"></a>        <span class="op">*</span> math<span class="op">::</span>scale<span class="op">(</span>uniformScale<span class="op">);</span></span>
+<span id="cb109-6"><a href="#cb109-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb109-7"><a href="#cb109-7" aria-hidden="true" tabindex="-1"></a>    worldMatrix <span class="op">=</span> parentWorld <span class="op">*</span> local<span class="op">;</span></span>
+<span id="cb109-8"><a href="#cb109-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb109-9"><a href="#cb109-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> <span class="op">(</span><span class="kw">auto</span><span class="op">&amp;</span> child <span class="op">:</span> <span class="va">m_children</span><span class="op">)</span></span>
+<span id="cb109-10"><a href="#cb109-10" aria-hidden="true" tabindex="-1"></a>        child<span class="op">-&gt;</span>updateWorldMatrix<span class="op">(</span>worldMatrix<span class="op">);</span></span>
+<span id="cb109-11"><a href="#cb109-11" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p>Der Aufruf ist rekursiv — top-down vom Root. Jeder Node berechnet
 seine World Matrix aus der bereits berechneten Parent-World-Matrix. So
 muss man nur einmal von Root starten.</p>
 <h3 id="warum-stdshared_ptr-für-children">Warum
 <code>std::shared_ptr</code> für Children?</h3>
-<div class="sourceCode" id="cb109"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb109-1"><a href="#cb109-1" aria-hidden="true" tabindex="-1"></a><span class="bu">std::</span>vector<span class="op">&lt;</span><span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>Node<span class="op">&gt;&gt;</span> <span class="va">m_children</span><span class="op">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb110"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb110-1"><a href="#cb110-1" aria-hidden="true" tabindex="-1"></a><span class="bu">std::</span>vector<span class="op">&lt;</span><span class="bu">std::</span>shared_ptr<span class="op">&lt;</span>Node<span class="op">&gt;&gt;</span> <span class="va">m_children</span><span class="op">;</span></span></code></pre></div>
 <p><code>shared_ptr</code> ermöglicht es, dass mehrere Stellen eine Node
 halten können (z.B. eine Animation-Liste und der Scene Graph). Der
 Destruktor räumt automatisch auf wenn der letzte <code>shared_ptr</code>
@@ -2313,8 +2332,8 @@ weg ist.</p>
 <code>unique_ptr</code> auch ausreichend, aber <code>shared_ptr</code>
 ist die robustere Wahl für spätere Erweiterungen.</p>
 <h3 id="nicht-owning-mesh-pointer">Nicht-owning Mesh-Pointer</h3>
-<div class="sourceCode" id="cb110"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb110-1"><a href="#cb110-1" aria-hidden="true" tabindex="-1"></a>Mesh<span class="op">*</span> mesh <span class="op">{</span> <span class="kw">nullptr</span> <span class="op">};</span>   <span class="co">// nicht-owning!</span></span></code></pre></div>
+<div class="sourceCode" id="cb111"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb111-1"><a href="#cb111-1" aria-hidden="true" tabindex="-1"></a>Mesh<span class="op">*</span> mesh <span class="op">{</span> <span class="kw">nullptr</span> <span class="op">};</span>   <span class="co">// nicht-owning!</span></span></code></pre></div>
 <p>Der Node <strong>referenziert</strong> ein Mesh, er
 <strong>besitzt</strong> es nicht. Der Renderer besitzt das Mesh
 (<code>m_mesh</code>). Mehrere Nodes könnten dasselbe Mesh referenzieren
@@ -2392,28 +2411,28 @@ Das ist nur dann für alle <code>t</code> wahr wenn
 <code>N^T * M = I</code>, also
 <code>N = (M^-1)^T = transpose(inverse(M))</code>.</p>
 <h3 id="math.hpp-normalmatrix">Math.hpp — normalMatrix()</h3>
-<div class="sourceCode" id="cb117"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb117-1"><a href="#cb117-1" aria-hidden="true" tabindex="-1"></a><span class="kw">inline</span> simd<span class="op">::</span>float3x3 normalMatrix<span class="op">(</span><span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> m<span class="op">)</span> <span class="op">{</span></span>
-<span id="cb117-2"><a href="#cb117-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3x3 upper<span class="op">{</span></span>
-<span id="cb117-3"><a href="#cb117-3" aria-hidden="true" tabindex="-1"></a>        simd<span class="op">::</span>float3<span class="op">{</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">0</span><span class="op">].</span>x<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">0</span><span class="op">].</span>y<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">0</span><span class="op">].</span>z <span class="op">},</span></span>
-<span id="cb117-4"><a href="#cb117-4" aria-hidden="true" tabindex="-1"></a>        simd<span class="op">::</span>float3<span class="op">{</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">1</span><span class="op">].</span>x<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">1</span><span class="op">].</span>y<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">1</span><span class="op">].</span>z <span class="op">},</span></span>
-<span id="cb117-5"><a href="#cb117-5" aria-hidden="true" tabindex="-1"></a>        simd<span class="op">::</span>float3<span class="op">{</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">2</span><span class="op">].</span>x<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">2</span><span class="op">].</span>y<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">2</span><span class="op">].</span>z <span class="op">}</span></span>
-<span id="cb117-6"><a href="#cb117-6" aria-hidden="true" tabindex="-1"></a>    <span class="op">};</span></span>
-<span id="cb117-7"><a href="#cb117-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> simd<span class="op">::</span>transpose<span class="op">(</span>simd<span class="op">::</span>inverse<span class="op">(</span>upper<span class="op">));</span></span>
-<span id="cb117-8"><a href="#cb117-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb118"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb118-1"><a href="#cb118-1" aria-hidden="true" tabindex="-1"></a><span class="kw">inline</span> simd<span class="op">::</span>float3x3 normalMatrix<span class="op">(</span><span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> m<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb118-2"><a href="#cb118-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3x3 upper<span class="op">{</span></span>
+<span id="cb118-3"><a href="#cb118-3" aria-hidden="true" tabindex="-1"></a>        simd<span class="op">::</span>float3<span class="op">{</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">0</span><span class="op">].</span>x<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">0</span><span class="op">].</span>y<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">0</span><span class="op">].</span>z <span class="op">},</span></span>
+<span id="cb118-4"><a href="#cb118-4" aria-hidden="true" tabindex="-1"></a>        simd<span class="op">::</span>float3<span class="op">{</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">1</span><span class="op">].</span>x<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">1</span><span class="op">].</span>y<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">1</span><span class="op">].</span>z <span class="op">},</span></span>
+<span id="cb118-5"><a href="#cb118-5" aria-hidden="true" tabindex="-1"></a>        simd<span class="op">::</span>float3<span class="op">{</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">2</span><span class="op">].</span>x<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">2</span><span class="op">].</span>y<span class="op">,</span> m<span class="op">.</span>columns<span class="op">[</span><span class="dv">2</span><span class="op">].</span>z <span class="op">}</span></span>
+<span id="cb118-6"><a href="#cb118-6" aria-hidden="true" tabindex="-1"></a>    <span class="op">};</span></span>
+<span id="cb118-7"><a href="#cb118-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> simd<span class="op">::</span>transpose<span class="op">(</span>simd<span class="op">::</span>inverse<span class="op">(</span>upper<span class="op">));</span></span>
+<span id="cb118-8"><a href="#cb118-8" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p>Wir extrahieren die obere-linke 3×3 aus der 4×4 Model Matrix (die
 Translations-Spalte ist für Normalen irrelevant) und berechnen
 <code>transpose(inverse(...))</code>.</p>
 <p><code>simd::inverse()</code> und <code>simd::transpose()</code> sind
 direkte SIMD-Operationen — sehr schnell.</p>
 <h3 id="uniforms.hpp-das-update">Uniforms.hpp — das Update</h3>
-<div class="sourceCode" id="cb118"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb118-1"><a href="#cb118-1" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> Uniforms <span class="op">{</span></span>
-<span id="cb118-2"><a href="#cb118-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 modelMatrix<span class="op">;</span></span>
-<span id="cb118-3"><a href="#cb118-3" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 viewMatrix<span class="op">;</span></span>
-<span id="cb118-4"><a href="#cb118-4" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 projectionMatrix<span class="op">;</span></span>
-<span id="cb118-5"><a href="#cb118-5" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3x3 normalMatrix<span class="op">;</span>     <span class="co">// transpose(inverse(modelMatrix)) obere-linke 3x3</span></span>
-<span id="cb118-6"><a href="#cb118-6" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<div class="sourceCode" id="cb119"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb119-1"><a href="#cb119-1" aria-hidden="true" tabindex="-1"></a><span class="kw">struct</span> Uniforms <span class="op">{</span></span>
+<span id="cb119-2"><a href="#cb119-2" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 modelMatrix<span class="op">;</span></span>
+<span id="cb119-3"><a href="#cb119-3" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 viewMatrix<span class="op">;</span></span>
+<span id="cb119-4"><a href="#cb119-4" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float4x4 projectionMatrix<span class="op">;</span></span>
+<span id="cb119-5"><a href="#cb119-5" aria-hidden="true" tabindex="-1"></a>    simd<span class="op">::</span>float3x3 normalMatrix<span class="op">;</span>     <span class="co">// transpose(inverse(modelMatrix)) obere-linke 3x3</span></span>
+<span id="cb119-6"><a href="#cb119-6" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
 <p><code>simd::float3x3</code> ist 36 Bytes (3 × 3 × 4). Das Struct ist
 nun <strong>228 Bytes</strong> gesamt. <strong>Kein
 Padding-Problem</strong> weil <code>float4x4</code> 16-Byte-aligned ist
@@ -2434,65 +2453,65 @@ dasselbe Memory-Layout — <code>memcpy</code> funktioniert korrekt.</p>
 <h2 id="renderer-buildscene-und-drawnode">38. Renderer — buildScene und
 drawNode</h2>
 <h3 id="buildscene">buildScene()</h3>
-<div class="sourceCode" id="cb120"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb120-1"><a href="#cb120-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Renderer<span class="op">::</span>buildScene<span class="op">()</span> <span class="op">{</span></span>
-<span id="cb120-2"><a href="#cb120-2" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_mesh</span> <span class="op">=</span> Mesh<span class="op">::</span>loadGLB<span class="op">(</span><span class="va">m_device</span><span class="op">,</span> <span class="st">&quot;assets/cube.glb&quot;</span><span class="op">);</span></span>
-<span id="cb120-3"><a href="#cb120-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb120-4"><a href="#cb120-4" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_sceneRoot</span> <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Node<span class="op">&gt;(</span><span class="st">&quot;root&quot;</span><span class="op">);</span></span>
-<span id="cb120-5"><a href="#cb120-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb120-6"><a href="#cb120-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">auto</span> meshNode <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Node<span class="op">&gt;(</span><span class="st">&quot;cube&quot;</span><span class="op">);</span></span>
-<span id="cb120-7"><a href="#cb120-7" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>mesh          <span class="op">=</span> <span class="va">m_mesh</span><span class="op">;</span></span>
-<span id="cb120-8"><a href="#cb120-8" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>translation   <span class="op">=</span> <span class="op">{</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">0.0</span><span class="bu">f</span> <span class="op">};</span></span>
-<span id="cb120-9"><a href="#cb120-9" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>rotationAxis  <span class="op">=</span> <span class="op">{</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">1.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">0.0</span><span class="bu">f</span> <span class="op">};</span></span>
-<span id="cb120-10"><a href="#cb120-10" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>rotationAngle <span class="op">=</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">;</span></span>
-<span id="cb120-11"><a href="#cb120-11" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>uniformScale  <span class="op">=</span> <span class="fl">1.0</span><span class="bu">f</span><span class="op">;</span></span>
-<span id="cb120-12"><a href="#cb120-12" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb120-13"><a href="#cb120-13" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_sceneRoot</span><span class="op">-&gt;</span>addChild<span class="op">(</span>meshNode<span class="op">);</span></span>
-<span id="cb120-14"><a href="#cb120-14" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb121"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb121-1"><a href="#cb121-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Renderer<span class="op">::</span>buildScene<span class="op">()</span> <span class="op">{</span></span>
+<span id="cb121-2"><a href="#cb121-2" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_mesh</span> <span class="op">=</span> Mesh<span class="op">::</span>loadGLB<span class="op">(</span><span class="va">m_device</span><span class="op">,</span> <span class="st">&quot;assets/cube.glb&quot;</span><span class="op">);</span></span>
+<span id="cb121-3"><a href="#cb121-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb121-4"><a href="#cb121-4" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_sceneRoot</span> <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Node<span class="op">&gt;(</span><span class="st">&quot;root&quot;</span><span class="op">);</span></span>
+<span id="cb121-5"><a href="#cb121-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb121-6"><a href="#cb121-6" aria-hidden="true" tabindex="-1"></a>    <span class="kw">auto</span> meshNode <span class="op">=</span> <span class="bu">std::</span>make_shared<span class="op">&lt;</span>Node<span class="op">&gt;(</span><span class="st">&quot;cube&quot;</span><span class="op">);</span></span>
+<span id="cb121-7"><a href="#cb121-7" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>mesh          <span class="op">=</span> <span class="va">m_mesh</span><span class="op">;</span></span>
+<span id="cb121-8"><a href="#cb121-8" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>translation   <span class="op">=</span> <span class="op">{</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">0.0</span><span class="bu">f</span> <span class="op">};</span></span>
+<span id="cb121-9"><a href="#cb121-9" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>rotationAxis  <span class="op">=</span> <span class="op">{</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">1.0</span><span class="bu">f</span><span class="op">,</span> <span class="fl">0.0</span><span class="bu">f</span> <span class="op">};</span></span>
+<span id="cb121-10"><a href="#cb121-10" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>rotationAngle <span class="op">=</span> <span class="fl">0.0</span><span class="bu">f</span><span class="op">;</span></span>
+<span id="cb121-11"><a href="#cb121-11" aria-hidden="true" tabindex="-1"></a>    meshNode<span class="op">-&gt;</span>uniformScale  <span class="op">=</span> <span class="fl">1.0</span><span class="bu">f</span><span class="op">;</span></span>
+<span id="cb121-12"><a href="#cb121-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb121-13"><a href="#cb121-13" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_sceneRoot</span><span class="op">-&gt;</span>addChild<span class="op">(</span>meshNode<span class="op">);</span></span>
+<span id="cb121-14"><a href="#cb121-14" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p><code>buildScene()</code> ersetzt <code>buildGeometry()</code>. Die
 Trennung: der Renderer besitzt <code>m_mesh</code> (der Metal Buffer)
 und den Scene Graph (der die Transform-Hierarchie beschreibt). Der
 <code>meshNode</code> hält einen nicht-owning Pointer auf
 <code>m_mesh</code>.</p>
 <h3 id="animation-im-draw">Animation im draw()</h3>
-<div class="sourceCode" id="cb121"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb121-1"><a href="#cb121-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Renderer<span class="op">::</span>draw<span class="op">(...)</span> <span class="op">{</span></span>
-<span id="cb121-2"><a href="#cb121-2" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_time</span> <span class="op">+=</span> <span class="fl">1.0</span><span class="bu">f</span> <span class="op">/</span> <span class="fl">60.0</span><span class="bu">f</span><span class="op">;</span></span>
-<span id="cb121-3"><a href="#cb121-3" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb121-4"><a href="#cb121-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Cube-Node animieren</span></span>
-<span id="cb121-5"><a href="#cb121-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(!</span><span class="va">m_sceneRoot</span><span class="op">-&gt;</span>children<span class="op">().</span>empty<span class="op">())</span> <span class="op">{</span></span>
-<span id="cb121-6"><a href="#cb121-6" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span><span class="op">&amp;</span> cube <span class="op">=</span> <span class="op">*</span><span class="va">m_sceneRoot</span><span class="op">-&gt;</span>children<span class="op">()[</span><span class="dv">0</span><span class="op">];</span></span>
-<span id="cb121-7"><a href="#cb121-7" aria-hidden="true" tabindex="-1"></a>        cube<span class="op">.</span>rotationAngle <span class="op">=</span> <span class="va">m_time</span> <span class="op">*</span> <span class="fl">0.8</span><span class="bu">f</span><span class="op">;</span></span>
-<span id="cb121-8"><a href="#cb121-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
-<span id="cb121-9"><a href="#cb121-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb121-10"><a href="#cb121-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// World Matrices top-down aktualisieren</span></span>
-<span id="cb121-11"><a href="#cb121-11" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_sceneRoot</span><span class="op">-&gt;</span>updateWorldMatrix<span class="op">();</span></span></code></pre></div>
+<div class="sourceCode" id="cb122"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb122-1"><a href="#cb122-1" aria-hidden="true" tabindex="-1"></a><span class="dt">void</span> Renderer<span class="op">::</span>draw<span class="op">(...)</span> <span class="op">{</span></span>
+<span id="cb122-2"><a href="#cb122-2" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_time</span> <span class="op">+=</span> <span class="fl">1.0</span><span class="bu">f</span> <span class="op">/</span> <span class="fl">60.0</span><span class="bu">f</span><span class="op">;</span></span>
+<span id="cb122-3"><a href="#cb122-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb122-4"><a href="#cb122-4" aria-hidden="true" tabindex="-1"></a>    <span class="co">// Cube-Node animieren</span></span>
+<span id="cb122-5"><a href="#cb122-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(!</span><span class="va">m_sceneRoot</span><span class="op">-&gt;</span>children<span class="op">().</span>empty<span class="op">())</span> <span class="op">{</span></span>
+<span id="cb122-6"><a href="#cb122-6" aria-hidden="true" tabindex="-1"></a>        <span class="kw">auto</span><span class="op">&amp;</span> cube <span class="op">=</span> <span class="op">*</span><span class="va">m_sceneRoot</span><span class="op">-&gt;</span>children<span class="op">()[</span><span class="dv">0</span><span class="op">];</span></span>
+<span id="cb122-7"><a href="#cb122-7" aria-hidden="true" tabindex="-1"></a>        cube<span class="op">.</span>rotationAngle <span class="op">=</span> <span class="va">m_time</span> <span class="op">*</span> <span class="fl">0.8</span><span class="bu">f</span><span class="op">;</span></span>
+<span id="cb122-8"><a href="#cb122-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb122-9"><a href="#cb122-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb122-10"><a href="#cb122-10" aria-hidden="true" tabindex="-1"></a>    <span class="co">// World Matrices top-down aktualisieren</span></span>
+<span id="cb122-11"><a href="#cb122-11" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_sceneRoot</span><span class="op">-&gt;</span>updateWorldMatrix<span class="op">();</span></span></code></pre></div>
 <p>Wir setzen nur <code>rotationAngle</code> des Cube-Nodes —
 <code>updateWorldMatrix()</code> berechnet dann automatisch die neue
 <code>worldMatrix</code>. Kein direktes Matrix-Manipulieren mehr.</p>
 <h3 id="drawnode-rekursive-funktion">drawNode() — Rekursive
 Funktion</h3>
-<div class="sourceCode" id="cb122"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb122-1"><a href="#cb122-1" aria-hidden="true" tabindex="-1"></a><span class="at">static</span> <span class="dt">void</span> drawNode<span class="op">(</span><span class="at">const</span> Node<span class="op">&amp;</span> node<span class="op">,</span></span>
-<span id="cb122-2"><a href="#cb122-2" aria-hidden="true" tabindex="-1"></a>                     MTL<span class="op">::</span>RenderCommandEncoder<span class="op">*</span> enc<span class="op">,</span></span>
-<span id="cb122-3"><a href="#cb122-3" aria-hidden="true" tabindex="-1"></a>                     MTL<span class="op">::</span>Buffer<span class="op">*</span> uniformBuffer<span class="op">,</span></span>
-<span id="cb122-4"><a href="#cb122-4" aria-hidden="true" tabindex="-1"></a>                     <span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> view<span class="op">,</span></span>
-<span id="cb122-5"><a href="#cb122-5" aria-hidden="true" tabindex="-1"></a>                     <span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> proj<span class="op">)</span> <span class="op">{</span></span>
-<span id="cb122-6"><a href="#cb122-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(</span>node<span class="op">.</span>mesh <span class="op">&amp;&amp;</span> node<span class="op">.</span>mesh<span class="op">-&gt;</span>isValid<span class="op">())</span> <span class="op">{</span></span>
-<span id="cb122-7"><a href="#cb122-7" aria-hidden="true" tabindex="-1"></a>        Uniforms u<span class="op">;</span></span>
-<span id="cb122-8"><a href="#cb122-8" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>modelMatrix      <span class="op">=</span> node<span class="op">.</span>worldMatrix<span class="op">;</span></span>
-<span id="cb122-9"><a href="#cb122-9" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>viewMatrix       <span class="op">=</span> view<span class="op">;</span></span>
-<span id="cb122-10"><a href="#cb122-10" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>projectionMatrix <span class="op">=</span> proj<span class="op">;</span></span>
-<span id="cb122-11"><a href="#cb122-11" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>normalMatrix     <span class="op">=</span> math<span class="op">::</span>normalMatrix<span class="op">(</span>node<span class="op">.</span>worldMatrix<span class="op">);</span></span>
-<span id="cb122-12"><a href="#cb122-12" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>memcpy<span class="op">(</span>uniformBuffer<span class="op">-&gt;</span>contents<span class="op">(),</span> <span class="op">&amp;</span>u<span class="op">,</span> <span class="kw">sizeof</span><span class="op">(</span>Uniforms<span class="op">));</span></span>
-<span id="cb122-13"><a href="#cb122-13" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb122-14"><a href="#cb122-14" aria-hidden="true" tabindex="-1"></a>        enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span>uniformBuffer<span class="op">,</span> <span class="dv">0</span><span class="op">,</span> <span class="dv">1</span><span class="op">);</span></span>
-<span id="cb122-15"><a href="#cb122-15" aria-hidden="true" tabindex="-1"></a>        node<span class="op">.</span>mesh<span class="op">-&gt;</span>draw<span class="op">(</span>enc<span class="op">);</span></span>
-<span id="cb122-16"><a href="#cb122-16" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
-<span id="cb122-17"><a href="#cb122-17" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb122-18"><a href="#cb122-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> <span class="op">(</span><span class="at">const</span> <span class="kw">auto</span><span class="op">&amp;</span> child <span class="op">:</span> node<span class="op">.</span>children<span class="op">())</span></span>
-<span id="cb122-19"><a href="#cb122-19" aria-hidden="true" tabindex="-1"></a>        drawNode<span class="op">(*</span>child<span class="op">,</span> enc<span class="op">,</span> uniformBuffer<span class="op">,</span> view<span class="op">,</span> proj<span class="op">);</span></span>
-<span id="cb122-20"><a href="#cb122-20" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb123"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb123-1"><a href="#cb123-1" aria-hidden="true" tabindex="-1"></a><span class="at">static</span> <span class="dt">void</span> drawNode<span class="op">(</span><span class="at">const</span> Node<span class="op">&amp;</span> node<span class="op">,</span></span>
+<span id="cb123-2"><a href="#cb123-2" aria-hidden="true" tabindex="-1"></a>                     MTL<span class="op">::</span>RenderCommandEncoder<span class="op">*</span> enc<span class="op">,</span></span>
+<span id="cb123-3"><a href="#cb123-3" aria-hidden="true" tabindex="-1"></a>                     MTL<span class="op">::</span>Buffer<span class="op">*</span> uniformBuffer<span class="op">,</span></span>
+<span id="cb123-4"><a href="#cb123-4" aria-hidden="true" tabindex="-1"></a>                     <span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> view<span class="op">,</span></span>
+<span id="cb123-5"><a href="#cb123-5" aria-hidden="true" tabindex="-1"></a>                     <span class="at">const</span> simd<span class="op">::</span>float4x4<span class="op">&amp;</span> proj<span class="op">)</span> <span class="op">{</span></span>
+<span id="cb123-6"><a href="#cb123-6" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> <span class="op">(</span>node<span class="op">.</span>mesh <span class="op">&amp;&amp;</span> node<span class="op">.</span>mesh<span class="op">-&gt;</span>isValid<span class="op">())</span> <span class="op">{</span></span>
+<span id="cb123-7"><a href="#cb123-7" aria-hidden="true" tabindex="-1"></a>        Uniforms u<span class="op">;</span></span>
+<span id="cb123-8"><a href="#cb123-8" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>modelMatrix      <span class="op">=</span> node<span class="op">.</span>worldMatrix<span class="op">;</span></span>
+<span id="cb123-9"><a href="#cb123-9" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>viewMatrix       <span class="op">=</span> view<span class="op">;</span></span>
+<span id="cb123-10"><a href="#cb123-10" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>projectionMatrix <span class="op">=</span> proj<span class="op">;</span></span>
+<span id="cb123-11"><a href="#cb123-11" aria-hidden="true" tabindex="-1"></a>        u<span class="op">.</span>normalMatrix     <span class="op">=</span> math<span class="op">::</span>normalMatrix<span class="op">(</span>node<span class="op">.</span>worldMatrix<span class="op">);</span></span>
+<span id="cb123-12"><a href="#cb123-12" aria-hidden="true" tabindex="-1"></a>        <span class="bu">std::</span>memcpy<span class="op">(</span>uniformBuffer<span class="op">-&gt;</span>contents<span class="op">(),</span> <span class="op">&amp;</span>u<span class="op">,</span> <span class="kw">sizeof</span><span class="op">(</span>Uniforms<span class="op">));</span></span>
+<span id="cb123-13"><a href="#cb123-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb123-14"><a href="#cb123-14" aria-hidden="true" tabindex="-1"></a>        enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span>uniformBuffer<span class="op">,</span> <span class="dv">0</span><span class="op">,</span> <span class="dv">1</span><span class="op">);</span></span>
+<span id="cb123-15"><a href="#cb123-15" aria-hidden="true" tabindex="-1"></a>        node<span class="op">.</span>mesh<span class="op">-&gt;</span>draw<span class="op">(</span>enc<span class="op">);</span></span>
+<span id="cb123-16"><a href="#cb123-16" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
+<span id="cb123-17"><a href="#cb123-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb123-18"><a href="#cb123-18" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> <span class="op">(</span><span class="at">const</span> <span class="kw">auto</span><span class="op">&amp;</span> child <span class="op">:</span> node<span class="op">.</span>children<span class="op">())</span></span>
+<span id="cb123-19"><a href="#cb123-19" aria-hidden="true" tabindex="-1"></a>        drawNode<span class="op">(*</span>child<span class="op">,</span> enc<span class="op">,</span> uniformBuffer<span class="op">,</span> view<span class="op">,</span> proj<span class="op">);</span></span>
+<span id="cb123-20"><a href="#cb123-20" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p>Diese Funktion traversiert den Scene Graph rekursiv. Für jeden Node
 der ein valides Mesh hat: 1. Uniforms mit der Node’s
 <code>worldMatrix</code> befüllen 2. Uniform Buffer binden 3. Mesh
@@ -2509,37 +2528,37 @@ mehreren Meshes und Triple-Buffering würde man einen Ring-Buffer oder
 <h2 id="cmakelists.txt-neue-einträge">39. CMakeLists.txt — Neue
 Einträge</h2>
 <h3 id="mesh.mm-in-engine_sources">Mesh.mm in ENGINE_SOURCES</h3>
-<div class="sourceCode" id="cb123"><pre
-class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb123-1"><a href="#cb123-1" aria-hidden="true" tabindex="-1"></a><span class="kw">set</span>(ENGINE_SOURCES</span>
-<span id="cb123-2"><a href="#cb123-2" aria-hidden="true" tabindex="-1"></a>    src/main.mm</span>
-<span id="cb123-3"><a href="#cb123-3" aria-hidden="true" tabindex="-1"></a>    src/AppDelegate.mm</span>
-<span id="cb123-4"><a href="#cb123-4" aria-hidden="true" tabindex="-1"></a>    src/MetalViewDelegate.mm</span>
-<span id="cb123-5"><a href="#cb123-5" aria-hidden="true" tabindex="-1"></a>    src/InputMTKView.mm</span>
-<span id="cb123-6"><a href="#cb123-6" aria-hidden="true" tabindex="-1"></a>    src/Renderer.mm</span>
-<span id="cb123-7"><a href="#cb123-7" aria-hidden="true" tabindex="-1"></a>    src/Mesh.mm          <span class="co"># ← neu</span></span>
-<span id="cb123-8"><a href="#cb123-8" aria-hidden="true" tabindex="-1"></a>    src/MetalImpl.mm</span>
-<span id="cb123-9"><a href="#cb123-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb124"><pre
+class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb124-1"><a href="#cb124-1" aria-hidden="true" tabindex="-1"></a><span class="kw">set</span>(ENGINE_SOURCES</span>
+<span id="cb124-2"><a href="#cb124-2" aria-hidden="true" tabindex="-1"></a>    src/main.mm</span>
+<span id="cb124-3"><a href="#cb124-3" aria-hidden="true" tabindex="-1"></a>    src/AppDelegate.mm</span>
+<span id="cb124-4"><a href="#cb124-4" aria-hidden="true" tabindex="-1"></a>    src/MetalViewDelegate.mm</span>
+<span id="cb124-5"><a href="#cb124-5" aria-hidden="true" tabindex="-1"></a>    src/InputMTKView.mm</span>
+<span id="cb124-6"><a href="#cb124-6" aria-hidden="true" tabindex="-1"></a>    src/Renderer.mm</span>
+<span id="cb124-7"><a href="#cb124-7" aria-hidden="true" tabindex="-1"></a>    src/Mesh.mm          <span class="co"># ← neu</span></span>
+<span id="cb124-8"><a href="#cb124-8" aria-hidden="true" tabindex="-1"></a>    src/MetalImpl.mm</span>
+<span id="cb124-9"><a href="#cb124-9" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 <p><code>Mesh.mm</code> enthält
 <code>#define CGLTF_IMPLEMENTATION</code> und damit die gesamte
 cgltf-Implementation. Sie muss in die Source-Liste damit CMake sie
 kompiliert.</p>
 <h3 id="cgltf-include-pfad">cgltf Include-Pfad</h3>
-<div class="sourceCode" id="cb124"><pre
-class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb124-1"><a href="#cb124-1" aria-hidden="true" tabindex="-1"></a><span class="kw">target_include_directories</span>(<span class="bn">metal4engine</span> <span class="ot">PRIVATE</span></span>
-<span id="cb124-2"><a href="#cb124-2" aria-hidden="true" tabindex="-1"></a>    <span class="dv">${CMAKE_SOURCE_DIR}</span>/vendor/metal-cpp</span>
-<span id="cb124-3"><a href="#cb124-3" aria-hidden="true" tabindex="-1"></a>    <span class="dv">${CMAKE_SOURCE_DIR}</span>/vendor/cgltf    <span class="co"># ← neu</span></span>
-<span id="cb124-4"><a href="#cb124-4" aria-hidden="true" tabindex="-1"></a>    <span class="dv">${CMAKE_SOURCE_DIR}</span>/src</span>
-<span id="cb124-5"><a href="#cb124-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb125"><pre
+class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb125-1"><a href="#cb125-1" aria-hidden="true" tabindex="-1"></a><span class="kw">target_include_directories</span>(<span class="bn">metal4engine</span> <span class="ot">PRIVATE</span></span>
+<span id="cb125-2"><a href="#cb125-2" aria-hidden="true" tabindex="-1"></a>    <span class="dv">${CMAKE_SOURCE_DIR}</span>/vendor/metal-cpp</span>
+<span id="cb125-3"><a href="#cb125-3" aria-hidden="true" tabindex="-1"></a>    <span class="dv">${CMAKE_SOURCE_DIR}</span>/vendor/cgltf    <span class="co"># ← neu</span></span>
+<span id="cb125-4"><a href="#cb125-4" aria-hidden="true" tabindex="-1"></a>    <span class="dv">${CMAKE_SOURCE_DIR}</span>/src</span>
+<span id="cb125-5"><a href="#cb125-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 <p>So findet <code>#include "cgltf.h"</code> die Datei in
 <code>vendor/cgltf/cgltf.h</code>.</p>
 <h3 id="assets-in-das-build-verzeichnis-kopieren">Assets in das
 Build-Verzeichnis kopieren</h3>
-<div class="sourceCode" id="cb125"><pre
-class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb125-1"><a href="#cb125-1" aria-hidden="true" tabindex="-1"></a><span class="kw">add_custom_command</span>(<span class="ot">TARGET</span> <span class="bn">metal4engine</span> <span class="bn">POST_BUILD</span></span>
-<span id="cb125-2"><a href="#cb125-2" aria-hidden="true" tabindex="-1"></a>    <span class="bn">COMMAND</span> <span class="dv">${CMAKE_COMMAND}</span> <span class="bn">-E</span> <span class="bn">copy_directory</span></span>
-<span id="cb125-3"><a href="#cb125-3" aria-hidden="true" tabindex="-1"></a>        <span class="dv">${CMAKE_SOURCE_DIR}</span>/<span class="bn">assets</span></span>
-<span id="cb125-4"><a href="#cb125-4" aria-hidden="true" tabindex="-1"></a>        <span class="ot">$&lt;</span><span class="kw">TARGET_FILE_DIR</span><span class="ot">:metal4engine&gt;</span>/<span class="bn">assets</span></span>
-<span id="cb125-5"><a href="#cb125-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<div class="sourceCode" id="cb126"><pre
+class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb126-1"><a href="#cb126-1" aria-hidden="true" tabindex="-1"></a><span class="kw">add_custom_command</span>(<span class="ot">TARGET</span> <span class="bn">metal4engine</span> <span class="bn">POST_BUILD</span></span>
+<span id="cb126-2"><a href="#cb126-2" aria-hidden="true" tabindex="-1"></a>    <span class="bn">COMMAND</span> <span class="dv">${CMAKE_COMMAND}</span> <span class="bn">-E</span> <span class="bn">copy_directory</span></span>
+<span id="cb126-3"><a href="#cb126-3" aria-hidden="true" tabindex="-1"></a>        <span class="dv">${CMAKE_SOURCE_DIR}</span>/<span class="bn">assets</span></span>
+<span id="cb126-4"><a href="#cb126-4" aria-hidden="true" tabindex="-1"></a>        <span class="ot">$&lt;</span><span class="kw">TARGET_FILE_DIR</span><span class="ot">:metal4engine&gt;</span>/<span class="bn">assets</span></span>
+<span id="cb126-5"><a href="#cb126-5" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
 <p><code>POST_BUILD</code> = wird nach dem Linken ausgeführt.
 <code>copy_directory</code> kopiert den gesamten
 <code>assets/</code>-Ordner neben die Binary.
@@ -2736,25 +2755,25 @@ Lichter = 150 Operationen statt 5000.</p>
 <h2 id="mtl4commandencoder-unified-encoder">MTL4CommandEncoder — Unified
 Encoder</h2>
 <p>Ab Milestone 4 wechseln wir auf den Metal 4 Unified Encoder:</p>
-<div class="sourceCode" id="cb131"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb131-1"><a href="#cb131-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 1-3: Separate Encoder für jeden Pass</span></span>
-<span id="cb131-2"><a href="#cb131-2" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> geoEncoder   <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
-<span id="cb131-3"><a href="#cb131-3" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode geometry ...</span></span>
-<span id="cb131-4"><a href="#cb131-4" aria-hidden="true" tabindex="-1"></a>geoEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
-<span id="cb131-5"><a href="#cb131-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb131-6"><a href="#cb131-6" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> lightEncoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
-<span id="cb131-7"><a href="#cb131-7" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode lighting ...</span></span>
-<span id="cb131-8"><a href="#cb131-8" aria-hidden="true" tabindex="-1"></a>lightEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
-<span id="cb131-9"><a href="#cb131-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb131-10"><a href="#cb131-10" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 4: Ein Encoder für alles</span></span>
-<span id="cb131-11"><a href="#cb131-11" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> encoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>desc<span class="op">);</span>  <span class="co">// MTL4CommandEncoder</span></span>
-<span id="cb131-12"><a href="#cb131-12" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
-<span id="cb131-13"><a href="#cb131-13" aria-hidden="true" tabindex="-1"></a><span class="co">// ... geometry ...</span></span>
-<span id="cb131-14"><a href="#cb131-14" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
-<span id="cb131-15"><a href="#cb131-15" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
-<span id="cb131-16"><a href="#cb131-16" aria-hidden="true" tabindex="-1"></a><span class="co">// ... lighting ...</span></span>
-<span id="cb131-17"><a href="#cb131-17" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
-<span id="cb131-18"><a href="#cb131-18" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span></code></pre></div>
+<div class="sourceCode" id="cb132"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb132-1"><a href="#cb132-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 1-3: Separate Encoder für jeden Pass</span></span>
+<span id="cb132-2"><a href="#cb132-2" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> geoEncoder   <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
+<span id="cb132-3"><a href="#cb132-3" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode geometry ...</span></span>
+<span id="cb132-4"><a href="#cb132-4" aria-hidden="true" tabindex="-1"></a>geoEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
+<span id="cb132-5"><a href="#cb132-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb132-6"><a href="#cb132-6" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> lightEncoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
+<span id="cb132-7"><a href="#cb132-7" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode lighting ...</span></span>
+<span id="cb132-8"><a href="#cb132-8" aria-hidden="true" tabindex="-1"></a>lightEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
+<span id="cb132-9"><a href="#cb132-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb132-10"><a href="#cb132-10" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 4: Ein Encoder für alles</span></span>
+<span id="cb132-11"><a href="#cb132-11" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> encoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>desc<span class="op">);</span>  <span class="co">// MTL4CommandEncoder</span></span>
+<span id="cb132-12"><a href="#cb132-12" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
+<span id="cb132-13"><a href="#cb132-13" aria-hidden="true" tabindex="-1"></a><span class="co">// ... geometry ...</span></span>
+<span id="cb132-14"><a href="#cb132-14" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
+<span id="cb132-15"><a href="#cb132-15" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
+<span id="cb132-16"><a href="#cb132-16" aria-hidden="true" tabindex="-1"></a><span class="co">// ... lighting ...</span></span>
+<span id="cb132-17"><a href="#cb132-17" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
+<span id="cb132-18"><a href="#cb132-18" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span></code></pre></div>
 <p><strong>Vorteil</strong>: Weniger CPU-Overhead, bessere
 GPU-Scheduling-Möglichkeiten.</p>
 <hr />
@@ -2774,17 +2793,17 @@ Frame N:    640×360  ──┘             ↑ temporal accumulation</code></pr
 <p><strong>Motion Vectors</strong>: Für jeden Pixel, in welche Richtung
 hat er sich seit dem letzten Frame bewegt? Der G-Buffer aus Milestone 4
 liefert die Tiefeninformation um Motion Vectors zu berechnen.</p>
-<div class="sourceCode" id="cb133"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb133-1"><a href="#cb133-1" aria-hidden="true" tabindex="-1"></a>MTLFXTemporalScalerDescriptor<span class="op">*</span> desc <span class="op">=</span> <span class="op">[[</span><span class="at">MTLFXTemporalScalerDescriptor alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
-<span id="cb133-2"><a href="#cb133-2" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputWidth    </span><span class="op">=</span><span class="at"> renderWidth;   </span><span class="co">// 640</span></span>
-<span id="cb133-3"><a href="#cb133-3" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputHeight   </span><span class="op">=</span><span class="at"> renderHeight;  </span><span class="co">// 360</span></span>
-<span id="cb133-4"><a href="#cb133-4" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputWidth   </span><span class="op">=</span><span class="at"> displayWidth;  </span><span class="co">// 1280</span></span>
-<span id="cb133-5"><a href="#cb133-5" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputHeight  </span><span class="op">=</span><span class="at"> displayHeight; </span><span class="co">// 720</span></span>
-<span id="cb133-6"><a href="#cb133-6" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">colorTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatRGBA16Float;</span></span>
-<span id="cb133-7"><a href="#cb133-7" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">motionTextureFormat    </span><span class="op">=</span><span class="at"> MTLPixelFormatRG16Float;</span></span>
-<span id="cb133-8"><a href="#cb133-8" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">depthTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatDepth32Float;</span></span>
-<span id="cb133-9"><a href="#cb133-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb133-10"><a href="#cb133-10" aria-hidden="true" tabindex="-1"></a><span class="at">id</span><span class="op">&lt;</span><span class="at">MTLFXTemporalScaler</span><span class="op">&gt;</span><span class="at"> scaler </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">desc newTemporalScalerWithDevice</span><span class="op">:</span><span class="at">device</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb134"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb134-1"><a href="#cb134-1" aria-hidden="true" tabindex="-1"></a>MTLFXTemporalScalerDescriptor<span class="op">*</span> desc <span class="op">=</span> <span class="op">[[</span><span class="at">MTLFXTemporalScalerDescriptor alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
+<span id="cb134-2"><a href="#cb134-2" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputWidth    </span><span class="op">=</span><span class="at"> renderWidth;   </span><span class="co">// 640</span></span>
+<span id="cb134-3"><a href="#cb134-3" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputHeight   </span><span class="op">=</span><span class="at"> renderHeight;  </span><span class="co">// 360</span></span>
+<span id="cb134-4"><a href="#cb134-4" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputWidth   </span><span class="op">=</span><span class="at"> displayWidth;  </span><span class="co">// 1280</span></span>
+<span id="cb134-5"><a href="#cb134-5" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputHeight  </span><span class="op">=</span><span class="at"> displayHeight; </span><span class="co">// 720</span></span>
+<span id="cb134-6"><a href="#cb134-6" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">colorTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatRGBA16Float;</span></span>
+<span id="cb134-7"><a href="#cb134-7" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">motionTextureFormat    </span><span class="op">=</span><span class="at"> MTLPixelFormatRG16Float;</span></span>
+<span id="cb134-8"><a href="#cb134-8" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">depthTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatDepth32Float;</span></span>
+<span id="cb134-9"><a href="#cb134-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb134-10"><a href="#cb134-10" aria-hidden="true" tabindex="-1"></a><span class="at">id</span><span class="op">&lt;</span><span class="at">MTLFXTemporalScaler</span><span class="op">&gt;</span><span class="at"> scaler </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">desc newTemporalScalerWithDevice</span><span class="op">:</span><span class="at">device</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
 <h2 id="frame-interpolation-metal-4-neu">Frame Interpolation (Metal 4
 neu)</h2>
 <p>Noch einen Schritt weiter: MetalFX kann zwischen zwei gerenderten
@@ -2819,23 +2838,23 @@ eines Meshes</li>
 <li><strong>TLAS</strong>: Referenziert BLASes mit ihrer
 World-Transform</li>
 </ul>
-<div class="sourceCode" id="cb136"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb136-1"><a href="#cb136-1" aria-hidden="true" tabindex="-1"></a><span class="co">// BLAS bauen (einmalig pro Mesh, teuer)</span></span>
-<span id="cb136-2"><a href="#cb136-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureTriangleGeometryDescriptor<span class="op">*</span> geoDesc <span class="op">=</span> <span class="op">...;</span></span>
-<span id="cb136-3"><a href="#cb136-3" aria-hidden="true" tabindex="-1"></a>geoDesc<span class="op">.</span>vertexBuffer <span class="op">=</span> <span class="va">m_vertexBuffer</span><span class="op">;</span></span>
-<span id="cb136-4"><a href="#cb136-4" aria-hidden="true" tabindex="-1"></a>MTLPrimitiveAccelerationStructureDescriptor<span class="op">*</span> blasDesc <span class="op">=</span> <span class="op">...;</span></span>
-<span id="cb136-5"><a href="#cb136-5" aria-hidden="true" tabindex="-1"></a>blasDesc<span class="op">.</span>geometryDescriptors <span class="op">=</span> <span class="er">@</span><span class="op">[</span>geoDesc<span class="op">];</span></span>
-<span id="cb136-6"><a href="#cb136-6" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> blas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>blasDesc<span class="op">];</span></span>
-<span id="cb136-7"><a href="#cb136-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb136-8"><a href="#cb136-8" aria-hidden="true" tabindex="-1"></a><span class="co">// TLAS bauen (jeden Frame wenn sich Objekte bewegen)</span></span>
-<span id="cb136-9"><a href="#cb136-9" aria-hidden="true" tabindex="-1"></a>MTLInstanceAccelerationStructureDescriptor<span class="op">*</span> tlasDesc <span class="op">=</span> <span class="op">...;</span></span>
-<span id="cb136-10"><a href="#cb136-10" aria-hidden="true" tabindex="-1"></a>tlasDesc<span class="op">.</span>instancedAccelerationStructures <span class="op">=</span> <span class="er">@</span><span class="op">[</span>blas<span class="op">,</span> blas2<span class="op">,</span> <span class="op">...];</span></span>
-<span id="cb136-11"><a href="#cb136-11" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> tlas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>tlasDesc<span class="op">];</span></span></code></pre></div>
+<div class="sourceCode" id="cb137"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb137-1"><a href="#cb137-1" aria-hidden="true" tabindex="-1"></a><span class="co">// BLAS bauen (einmalig pro Mesh, teuer)</span></span>
+<span id="cb137-2"><a href="#cb137-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureTriangleGeometryDescriptor<span class="op">*</span> geoDesc <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb137-3"><a href="#cb137-3" aria-hidden="true" tabindex="-1"></a>geoDesc<span class="op">.</span>vertexBuffer <span class="op">=</span> <span class="va">m_vertexBuffer</span><span class="op">;</span></span>
+<span id="cb137-4"><a href="#cb137-4" aria-hidden="true" tabindex="-1"></a>MTLPrimitiveAccelerationStructureDescriptor<span class="op">*</span> blasDesc <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb137-5"><a href="#cb137-5" aria-hidden="true" tabindex="-1"></a>blasDesc<span class="op">.</span>geometryDescriptors <span class="op">=</span> <span class="er">@</span><span class="op">[</span>geoDesc<span class="op">];</span></span>
+<span id="cb137-6"><a href="#cb137-6" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> blas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>blasDesc<span class="op">];</span></span>
+<span id="cb137-7"><a href="#cb137-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb137-8"><a href="#cb137-8" aria-hidden="true" tabindex="-1"></a><span class="co">// TLAS bauen (jeden Frame wenn sich Objekte bewegen)</span></span>
+<span id="cb137-9"><a href="#cb137-9" aria-hidden="true" tabindex="-1"></a>MTLInstanceAccelerationStructureDescriptor<span class="op">*</span> tlasDesc <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb137-10"><a href="#cb137-10" aria-hidden="true" tabindex="-1"></a>tlasDesc<span class="op">.</span>instancedAccelerationStructures <span class="op">=</span> <span class="er">@</span><span class="op">[</span>blas<span class="op">,</span> blas2<span class="op">,</span> <span class="op">...];</span></span>
+<span id="cb137-11"><a href="#cb137-11" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> tlas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>tlasDesc<span class="op">];</span></span></code></pre></div>
 <p>Metal 4 bietet neue <strong>Build-Flags</strong> für Speed/Memory
 Trade-off:</p>
-<div class="sourceCode" id="cb137"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb137-1"><a href="#cb137-1" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastBuild   <span class="co">// Schneller Build, mehr RAM</span></span>
-<span id="cb137-2"><a href="#cb137-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastTrace   <span class="co">// Langsamerer Build, schnelleres Tracing</span></span></code></pre></div>
+<div class="sourceCode" id="cb138"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb138-1"><a href="#cb138-1" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastBuild   <span class="co">// Schneller Build, mehr RAM</span></span>
+<span id="cb138-2"><a href="#cb138-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastTrace   <span class="co">// Langsamerer Build, schnelleres Tracing</span></span></code></pre></div>
 <h2 id="inline-ray-tracing-im-fragment-shader">Inline Ray Tracing im
 Fragment Shader</h2>
 <pre class="metal"><code>// Im Fragment Shader (Lighting Pass):
@@ -2877,13 +2896,13 @@ Pro/Max)</h2>
 sind spezialisierte ML-Recheneinheiten die Metal Performance Primitives
 (MPP) nutzen — 10-100× schneller als General-Purpose GPU-Shader für
 Matrix-Operationen.</p>
-<div class="sourceCode" id="cb140"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb140-1"><a href="#cb140-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal Performance Primitives für quantisierte Inferenz</span></span>
-<span id="cb140-2"><a href="#cb140-2" aria-hidden="true" tabindex="-1"></a>MPSGraph<span class="op">*</span> graph <span class="op">=</span> <span class="op">[[</span><span class="at">MPSGraph alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
-<span id="cb140-3"><a href="#cb140-3" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> inputTensor  </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph placeholderWithShape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">1</span><span class="op">,</span><span class="at"> @</span><span class="dv">64</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
-<span id="cb140-4"><a href="#cb140-4" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> weightTensor </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph constantWithData</span><span class="op">:</span><span class="at">weightsData shape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">64</span><span class="op">,</span><span class="at"> @</span><span class="dv">128</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
-<span id="cb140-5"><a href="#cb140-5" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> output       </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph matMulWithPrimaryTensor</span><span class="op">:</span><span class="at">inputTensor</span></span>
-<span id="cb140-6"><a href="#cb140-6" aria-hidden="true" tabindex="-1"></a><span class="at">                                             secondaryTensor</span><span class="op">:</span><span class="at">weightTensor name</span><span class="op">:</span><span class="at">nil</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb141"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb141-1"><a href="#cb141-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal Performance Primitives für quantisierte Inferenz</span></span>
+<span id="cb141-2"><a href="#cb141-2" aria-hidden="true" tabindex="-1"></a>MPSGraph<span class="op">*</span> graph <span class="op">=</span> <span class="op">[[</span><span class="at">MPSGraph alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
+<span id="cb141-3"><a href="#cb141-3" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> inputTensor  </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph placeholderWithShape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">1</span><span class="op">,</span><span class="at"> @</span><span class="dv">64</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
+<span id="cb141-4"><a href="#cb141-4" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> weightTensor </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph constantWithData</span><span class="op">:</span><span class="at">weightsData shape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">64</span><span class="op">,</span><span class="at"> @</span><span class="dv">128</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
+<span id="cb141-5"><a href="#cb141-5" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> output       </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph matMulWithPrimaryTensor</span><span class="op">:</span><span class="at">inputTensor</span></span>
+<span id="cb141-6"><a href="#cb141-6" aria-hidden="true" tabindex="-1"></a><span class="at">                                             secondaryTensor</span><span class="op">:</span><span class="at">weightTensor name</span><span class="op">:</span><span class="at">nil</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
 <h2 id="anwendungsfall-neural-material-synthesis">Anwendungsfall: Neural
 Material Synthesis</h2>
 <p>Statt gesampelter Texturen (Albedo, Normal, Roughness) kann ein
