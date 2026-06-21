@@ -1,6 +1,7 @@
 #pragma once
 
 #include <simd/simd.h>
+#include <cstdint>
 
 // ---------------------------------------------------------------------------
 // Uniforms.hpp — GPU-side constant data for each draw call.
@@ -11,8 +12,10 @@
 // For simplicity we use one buffer per frame (single draw call, no offsets).
 // ---------------------------------------------------------------------------
 struct Uniforms {
-    simd::float4x4 modelMatrix;
-    simd::float4x4 viewMatrix;
-    simd::float4x4 projectionMatrix;
-    simd::float3x3 normalMatrix;     // transpose(inverse(modelMatrix)) upper-left 3x3
+  simd::float4x4 modelMatrix;
+  simd::float4x4 viewMatrix;
+  simd::float4x4 projectionMatrix;
+  simd::float3x3 normalMatrix; // transpose(inverse(modelMatrix)) upper-left 3x3
+  uint32_t materialIndex;
+  simd::float3 _padding;
 };

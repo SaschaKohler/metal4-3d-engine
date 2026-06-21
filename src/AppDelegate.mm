@@ -22,7 +22,7 @@
                    NSWindowStyleMaskMiniaturizable)
         backing:NSBackingStoreBuffered
         defer:NO];
-    _window.title = @"Metal4Engine — Milestone 3";
+    _window.title = @"Metal4Engine — Milestone 3 (Suzanne)";
 
     // ── MTKView ──────────────────────────────────────────────────────────────
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();

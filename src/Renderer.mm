@@ -1,4 +1,6 @@
 #include "Renderer.hpp"
+#include "../shared/BindingIndices.h"
+#include "../shared/Material.h"
 #include "Math.hpp"
 #include "Uniforms.hpp"
 
@@ -8,23 +10,32 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <libgen.h>
 #include <mach-o/dyld.h>
 #include <string>
 
+static constexpr std::size_t kGridSize = 10;
+static constexpr std::size_t kInstanceCount = kGridSize * kGridSize;
+
+static std::size_t alignUp(std::size_t value, std::size_t alignment) {
+  return (value + alignment - 1) & ~(alignment - 1);
+}
 // ---------------------------------------------------------------------------
 Renderer::Renderer(MTL::Device *device) : m_device(device->retain()) {
   m_commandQueue = m_device->newCommandQueue();
   buildPipeline();
   buildDepthStencilState();
   buildUniformBuffer();
+  buildMaterialBuffer();
   buildScene();
 }
 
 Renderer::~Renderer() {
   delete m_mesh;
   m_uniformBuffer->release();
+  m_materialBuffer->release();
   m_depthStencilState->release();
   m_pipelineState->release();
   m_library->release();
@@ -89,29 +100,62 @@ void Renderer::buildDepthStencilState() {
 
 // ---------------------------------------------------------------------------
 void Renderer::buildUniformBuffer() {
-  m_uniformBuffer =
-      m_device->newBuffer(sizeof(Uniforms), MTL::ResourceStorageModeShared);
+  m_uniformStride = alignUp(sizeof(Uniforms), 256);
+
+  m_uniformBuffer = m_device->newBuffer(m_uniformStride * m_maxDraws,
+                                        MTL::ResourceStorageModeShared);
 }
 
 // ---------------------------------------------------------------------------
+void Renderer::buildMaterialBuffer() {
+  Material materials[kInstanceCount];
+
+  for (std::size_t i = 0; i < kInstanceCount; ++i) {
+    float t = static_cast<float>(i) / static_cast<float>(kInstanceCount - 1);
+    float row =
+        static_cast<float>(i / kGridSize) / static_cast<float>(kGridSize - 1);
+    float col =
+        static_cast<float>(i % kGridSize) / static_cast<float>(kGridSize - 1);
+
+    materials[i].baseColor = {0.20f + 0.75f * col, 0.25f + 0.55f * row,
+                              0.95f - 0.70f * col};
+    materials[i].roughness = 0.10f + 0.85f * row;
+    materials[i].metallic = t;
+    materials[i]._padding = {0.0f, 0.0f, 0.0f};
+  }
+
+  m_materialBuffer = m_device->newBuffer(materials, sizeof(materials),
+                                         MTL::ResourceStorageModeShared);
+}
+// ---------------------------------------------------------------------------
 void Renderer::buildScene() {
-  // Load Khronos Box.glb — path relative to the executable
   m_mesh = Mesh::loadGLB(m_device, "assets/cube.glb");
   if (!m_mesh) {
     printf("[Renderer] WARNING: mesh load failed — scene will be empty.\n");
   }
 
-  // Build a minimal scene: root → meshNode
+  m_camera.radius = 8.0f;
+  m_camera.pitch = 0.45f;
+  m_camera.yaw = 0.35f;
+
   m_sceneRoot = std::make_shared<Node>("root");
 
-  auto meshNode = std::make_shared<Node>("cube");
-  meshNode->mesh = m_mesh;
-  meshNode->translation = {0.0f, 0.0f, 0.0f};
-  meshNode->rotationAxis = {0.0f, 1.0f, 0.0f};
-  meshNode->rotationAngle = 0.0f;
-  meshNode->uniformScale = 1.0f;
+  float spacing = 0.55f;
+  float center = static_cast<float>(kGridSize - 1) * 0.5f;
 
-  m_sceneRoot->addChild(meshNode);
+  for (std::size_t z = 0; z < kGridSize; ++z) {
+    for (std::size_t x = 0; x < kGridSize; ++x) {
+      std::size_t index = z * kGridSize + x;
+      auto cube = std::make_shared<Node>("cube");
+      cube->mesh = m_mesh;
+      cube->translation = {(static_cast<float>(x) - center) * spacing, 0.0f,
+                           (static_cast<float>(z) - center) * spacing};
+      cube->rotationEuler = {0.0f, 0.0f, 0.0f};
+      cube->uniformScale = 0.25f;
+      cube->materialIndex = static_cast<std::uint32_t>(index);
+      m_sceneRoot->addChild(cube);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,22 +172,35 @@ void Renderer::onScroll(float delta) { m_camera.scroll(delta); }
 // drawNode — recursive: update uniforms + draw for every node with a mesh
 // ---------------------------------------------------------------------------
 static void drawNode(const Node &node, MTL::RenderCommandEncoder *enc,
-                     MTL::Buffer *uniformBuffer, const simd::float4x4 &view,
-                     const simd::float4x4 &proj) {
+                     MTL::Buffer *uniformBuffer, std::size_t uniformStride,
+                     std::size_t &drawIndex, MTL::Buffer *materialBuffer,
+                     const simd::float4x4 &view, const simd::float4x4 &proj) {
   if (node.mesh && node.mesh->isValid()) {
     Uniforms u;
     u.modelMatrix = node.worldMatrix;
     u.viewMatrix = view;
     u.projectionMatrix = proj;
     u.normalMatrix = math::normalMatrix(node.worldMatrix);
-    std::memcpy(uniformBuffer->contents(), &u, sizeof(Uniforms));
+    u.materialIndex = node.materialIndex;
+    u._padding = {0.0f, 0.0f, 0.0f};
 
-    enc->setVertexBuffer(uniformBuffer, 0, 1);
+    assert(drawIndex < kInstanceCount);
+
+    std::size_t uniformOffset = drawIndex * uniformStride;
+    auto *dst =
+        static_cast<std::uint8_t *>(uniformBuffer->contents()) + uniformOffset;
+    std::memcpy(dst, &u, sizeof(Uniforms));
+
+    enc->setVertexBuffer(uniformBuffer, uniformOffset, BufferIndexUniforms);
+    enc->setFragmentBuffer(materialBuffer, 0, BufferIndexMaterial);
+    drawIndex++;
+
     node.mesh->draw(enc);
   }
 
   for (const auto &child : node.children())
-    drawNode(*child, enc, uniformBuffer, view, proj);
+    drawNode(*child, enc, uniformBuffer, uniformStride, drawIndex,
+             materialBuffer, view, proj);
 }
 
 // ---------------------------------------------------------------------------
@@ -151,12 +208,17 @@ void Renderer::draw(CA::MetalDrawable *drawable, MTL::Texture *depthTexture,
                     float viewportWidth, float viewportHeight) {
   m_time += 1.0f / 60.0f;
 
-  // Animate the cube node (child 0 of root)
-  if (!m_sceneRoot->children().empty()) {
-    auto &cube = *m_sceneRoot->children()[0];
-    cube.rotationAngle = m_time * 0.8f;
-  }
+  // Draw scene graph recursively
+  const auto &cubes = m_sceneRoot->children();
 
+  for (std::size_t i = 0; i < cubes.size(); ++i) {
+    auto &cube = *cubes[i];
+
+    float phase = static_cast<float>(i) * 0.15f;
+    cube.rotationEuler.y = m_time * 0.8f + phase;
+    cube.translation.y = std::sin(m_time * 2.0f + phase) * 0.25f;
+    cube.rotationEuler.x = std::sin(m_time + phase) * 0.35f;
+  }
   // Update scene graph world matrices top-down
   m_sceneRoot->updateWorldMatrix();
 
@@ -190,9 +252,9 @@ void Renderer::draw(CA::MetalDrawable *drawable, MTL::Texture *depthTexture,
   enc->setDepthStencilState(m_depthStencilState);
   enc->setViewport(
       MTL::Viewport{0.0, 0.0, viewportWidth, viewportHeight, 0.0, 1.0});
-
-  // Draw scene graph recursively
-  drawNode(*m_sceneRoot, enc, m_uniformBuffer, view, proj);
+  std::size_t drawIndex = 0;
+  drawNode(*m_sceneRoot, enc, m_uniformBuffer, m_uniformStride, drawIndex,
+           m_materialBuffer, view, proj);
 
   enc->endEncoding();
   cmdBuf->presentDrawable(drawable);

@@ -2226,7 +2226,8 @@ draw() aufgerufen von MTKView (60fps)
                             │
 ┌───────────────────────────▼─────────────────────────────┐
 │                     GPU / MSL Layer                      │
-│  vertex_main(vertices[[0]], uniforms[[1]])                │
+│  mesh.metal: vertex_main(vertices, uniforms)              │
+│    → named bindings from shared/BindingIndices.h          │
 │    → MVP * position                                      │
 │    → normalMatrix * normal → worldNorm                   │
 │  fragment_main(worldNorm)                                │
@@ -2236,7 +2237,7 @@ draw() aufgerufen von MTKView (60fps)
 
 **Kernerkenntnis von Milestone 3**: Der Renderer kennt keine Vertex-Daten mehr direkt. Er arbeitet mit dem Scene Graph (Transforms) und delegiert das Zeichnen an `Mesh::draw()`. Das ist die saubere Trennung zwischen **Szenen-Logik** (Node-Hierarchie) und **GPU-Ressourcen** (Buffer).
 
-In Milestone 4 setzen wir das erste **Metal 4 Feature** ein: `MTL4ArgumentTable` (Bindless Buffers) — um viele Meshes effizienter zu rendern ohne pro-Objekt-Bind-Calls.
+In Milestone 4 bereiten wir zuerst die Binding-Struktur für **Metal 4 Argument Tables** vor. Danach setzen wir `MTL4ArgumentTable` (Bindless Buffers) ein — um viele Meshes effizienter zu rendern ohne pro-Objekt-Bind-Calls.
 
 ---
 
@@ -2245,6 +2246,355 @@ In Milestone 4 setzen wir das erste **Metal 4 Feature** ein: `MTL4ArgumentTable`
 ## Was wird gebaut?
 
 **Physically Based Rendering** — Materialien die sich physikalisch korrekt verhalten, und ein **Deferred Renderer** der viele Lichtquellen effizient handhabt.
+
+Bevor wir PBR und Deferred Rendering bauen, räumen wir zuerst die CPU/GPU-Binding-Struktur auf. Das ist kein Umweg: `MTL4ArgumentTable` funktioniert nur sauber, wenn klar ist, welcher Binding-Slot welche Bedeutung hat.
+
+## Erster Milestone-4-Schritt — Shared Binding Indices
+
+Bisher standen die Buffer-Slots als rohe Zahlen direkt im CPU- und GPU-Code:
+
+```cpp
+enc->setVertexBuffer(m_vertexBuffer, 0, 0); // Vertex Buffer auf Slot 0
+enc->setVertexBuffer(uniformBuffer, 0, 1);  // Uniform Buffer auf Slot 1
+```
+
+Und im Shader:
+
+```metal
+const device VertexIn* vertices [[buffer(0)]],
+constant Uniforms& uniforms     [[buffer(1)]]
+```
+
+Das funktioniert, ist aber fragil. Wenn CPU und GPU unterschiedliche Slot-Nummern verwenden, kompiliert das Programm oft trotzdem — aber der Shader liest dann falsche Daten. Solche Bugs sind schwer zu erkennen, weil sie wie kaputte Matrizen, kaputte Vertices oder komplett schwarzes Rendering aussehen können.
+
+Deshalb gibt es jetzt einen gemeinsamen Header:
+
+```cpp
+#pragma once
+
+enum BufferIndex {
+  BufferIndexVertices = 0,
+  BufferIndexUniforms = 1,
+};
+```
+
+Die Datei liegt in `shared/BindingIndices.h`, nicht in `src/`, weil sie von beiden Welten gelesen wird:
+
+| Nutzer | Include |
+|---|---|
+| CPU / Objective-C++ | `#include "../shared/BindingIndices.h"` |
+| GPU / Metal Shader | `#include "../shared/BindingIndices.h"` |
+
+Damit wird aus einem numerischen Slot ein semantischer Vertrag:
+
+| Name | Wert | Bedeutung |
+|---|---:|---|
+| `BufferIndexVertices` | 0 | Vertex Buffer mit `VertexIn` Daten |
+| `BufferIndexUniforms` | 1 | Uniform Buffer mit Model/View/Projection/Normal-Matrix |
+
+CPU-Seite:
+
+```cpp
+enc->setVertexBuffer(m_vertexBuffer, 0, BufferIndexVertices);
+enc->setVertexBuffer(uniformBuffer, 0, BufferIndexUniforms);
+```
+
+GPU-Seite:
+
+```metal
+const device VertexIn* vertices [[buffer(BufferIndexVertices)]],
+constant Uniforms& uniforms     [[buffer(BufferIndexUniforms)]]
+```
+
+### Warum ist das Vorbereitung für `MTL4ArgumentTable`?
+
+`MTL4ArgumentTable` verschiebt Bindings von vielen einzelnen Encoder-Aufrufen in eine Tabelle. Statt pro Draw Call einzelne Ressourcen zu setzen, beschreibt man Ressourcen zentral über Binding-Indizes. Genau deshalb müssen diese Indizes vorher eindeutig benannt und zwischen CPU und GPU geteilt sein.
+
+Der aktuelle Schritt ist also noch kein Bindless Rendering, aber er macht die Architektur bindless-fähig.
+
+### Shader-Datei umbenannt: `triangle.metal` → `mesh.metal`
+
+Die Shader-Datei heisst jetzt `shaders/mesh.metal`, weil sie nicht mehr nur ein Demo-Dreieck rendert. Sie verarbeitet echte Mesh-Vertices aus glTF:
+
+- Position
+- Normalen
+- Uniform-Matrizen
+- Phong-Beleuchtung als aktueller Platzhalter vor PBR
+
+Der Name `mesh.metal` beschreibt die aktuelle Verantwortung besser und lässt Raum für spätere Dateien wie `gbuffer.metal`, `pbr.metal` oder `lighting.metal`.
+
+### CMake-Abhängigkeit für Shared Shader Header
+
+Der Metal-Build hängt nicht nur von `mesh.metal` ab, sondern auch vom Shared Header:
+
+```cmake
+set(SHARED_SHADER_HEADERS ${CMAKE_SOURCE_DIR}/shared/BindingIndices.h)
+
+add_custom_command(
+    OUTPUT  ${METALLIB_OUT}
+    COMMAND xcrun -sdk macosx metal -c ${SHADER_SOURCE} -o ${CMAKE_BINARY_DIR}/mesh.air
+    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/mesh.air -o ${METALLIB_OUT}
+    DEPENDS ${SHADER_SOURCE} ${SHARED_SHADER_HEADERS}
+)
+```
+
+Ohne diese Dependency würde CMake bei einer Änderung an `shared/BindingIndices.h` eventuell nicht erkennen, dass `default.metallib` neu gebaut werden muss.
+
+## Material-Array und 100 Cube-Instanzen
+
+Der nächste Milestone-4-Schritt erweitert das Rendering von einem einzelnen Mesh/Material zu vielen Objektinstanzen mit unterschiedlichen Materialdaten.
+
+Aktuell laden wir `assets/cube.glb` einmal in einen einzigen `Mesh`:
+
+```cpp
+m_mesh = Mesh::loadGLB(m_device, "assets/cube.glb");
+```
+
+Danach erzeugen wir 100 `Node`-Instanzen in einem 10×10 Grid. Alle Nodes zeigen auf denselben Mesh-Speicher:
+
+```text
+cube node 0 ─┐
+cube node 1 ─┤
+cube node 2 ─┤
+...          ├─> ein gemeinsames Mesh mit Vertex- und Index-Buffer
+cube node 99 ┘
+```
+
+Das ist bereits eine wichtige Engine-Idee: **Instancing auf CPU-Seite**. Wir duplizieren nicht die Vertexdaten, sondern nur die Transform- und Materialauswahl pro Objekt.
+
+Jede Node bekommt einen eigenen Materialindex:
+
+```cpp
+cube->materialIndex = static_cast<std::uint32_t>(index);
+```
+
+Der Material-Buffer enthält jetzt nicht mehr ein einzelnes Material, sondern ein Array:
+
+```cpp
+Material materials[kInstanceCount];
+```
+
+Für jedes Objekt wird ein anderer Eintrag gefüllt:
+
+```cpp
+materials[i].baseColor = ...;
+materials[i].roughness = ...;
+materials[i].metallic = ...;
+```
+
+Auf der GPU-Seite liest der Fragment Shader dann nicht mehr:
+
+```metal
+constant Material& material
+```
+
+sondern:
+
+```metal
+constant Material* materials [[buffer(BufferIndexMaterial)]]
+```
+
+Der konkrete Materialeintrag wird über den weitergereichten Index gewählt:
+
+```metal
+constant Material& material = materials[in.materialIndex];
+```
+
+### Datenfluss pro Cube
+
+```text
+Node.materialIndex
+    ↓
+Uniforms.materialIndex
+    ↓
+vertex_main: out.materialIndex = uniforms.materialIndex
+    ↓
+VertexOut.materialIndex [[flat]]
+    ↓
+fragment_main: materials[in.materialIndex]
+```
+
+`[[flat]]` ist wichtig, weil `materialIndex` eine ID ist. IDs dürfen nicht zwischen Vertices interpoliert werden. Ohne `[[flat]]` könnte die Rasterizer-Stufe versuchen, zwischen Materialindex 0, 1, 2 usw. zu interpolieren. Für Farben ist Interpolation sinnvoll, für Indizes nicht.
+
+## Warum der Uniform Buffer jetzt Slots braucht
+
+Vorher hatten wir nur ein Objekt. Deshalb reichte ein einzelner Uniform-Block:
+
+```text
+m_uniformBuffer
+└─ Uniforms für ein Objekt
+```
+
+Bei mehreren Draw Calls ist das falsch. Der Grund ist wichtig:
+
+```cpp
+enc->setVertexBuffer(uniformBuffer, offset, BufferIndexUniforms);
+```
+
+Dieser Call kopiert nicht den Inhalt des Buffers. Er bindet nur:
+
+```text
+Buffer-Adresse + Offset + Binding-Slot
+```
+
+Die GPU führt die Commands später aus. Wenn die CPU vor mehreren Draw Calls immer denselben Speicherbereich überschreibt, sehen mehrere Draw Calls am Ende dieselben letzten Uniform-Daten.
+
+Falsches Modell:
+
+```text
+Draw 0: UniformBuffer = Cube 0
+Draw 1: UniformBuffer = Cube 1
+Draw 2: UniformBuffer = Cube 2
+...
+GPU liest später: alle Draws sehen eventuell Cube 99
+```
+
+Richtiges Modell:
+
+```text
+m_uniformBuffer
+├─ Slot 0  → Uniforms für Cube 0
+├─ Slot 1  → Uniforms für Cube 1
+├─ Slot 2  → Uniforms für Cube 2
+│
+└─ Slot 99 → Uniforms für Cube 99
+```
+
+Dafür berechnen wir einen Stride:
+
+```cpp
+m_uniformStride = alignUp(sizeof(Uniforms), 256);
+```
+
+`sizeof(Uniforms)` ist die tatsächliche Größe der Struct. `m_uniformStride` ist der Abstand zwischen zwei Uniform-Blöcken im Buffer.
+
+### Warum 256 Byte Alignment?
+
+Metal verlangt für Buffer-Offsets, die als Constant/Uniform-Daten genutzt werden, eine bestimmte Ausrichtung. Typisch ist 256 Byte. Deshalb darf der zweite Uniform-Block nicht einfach direkt nach dem ersten Struct beginnen, wenn die Struct-Größe nicht passend ausgerichtet ist.
+
+Beispiel:
+
+```text
+sizeof(Uniforms) = 224 Bytes
+m_uniformStride  = 256 Bytes
+```
+
+Dann liegen die Blöcke so:
+
+```text
+Offset 0   → Cube 0
+Offset 256 → Cube 1
+Offset 512 → Cube 2
+...
+```
+
+Der Speicher zwischen `224` und `255` ist Padding. Er wird nicht genutzt, sorgt aber dafür, dass der nächste Block korrekt aligned ist.
+
+### Was macht `drawIndex`?
+
+`drawIndex` ist der aktuelle Slot-Zähler für den Frame.
+
+Am Anfang jedes Frames:
+
+```cpp
+std::size_t drawIndex = 0;
+```
+
+Bei jedem Node mit Mesh:
+
+```cpp
+std::size_t uniformOffset = drawIndex * uniformStride;
+```
+
+Dann wird genau in diesen Slot geschrieben:
+
+```cpp
+auto* dst = static_cast<std::uint8_t*>(uniformBuffer->contents()) + uniformOffset;
+std::memcpy(dst, &u, sizeof(Uniforms));
+```
+
+Danach wird der Draw Call mit diesem Offset gebunden:
+
+```cpp
+enc->setVertexBuffer(uniformBuffer, uniformOffset, BufferIndexUniforms);
+```
+
+Dann wird erhöht:
+
+```cpp
+drawIndex++;
+```
+
+### Bestimmt `drawIndex`, wie viele Objekte gezeichnet werden können?
+
+Nicht direkt. `drawIndex` ist nur der aktuelle Zähler. Die maximale Anzahl wird durch die Größe des Uniform Buffers bestimmt:
+
+```cpp
+m_uniformBuffer = m_device->newBuffer(
+    m_uniformStride * m_maxDraws,
+    MTL::ResourceStorageModeShared);
+```
+
+Hier bedeutet:
+
+```text
+m_maxDraws = maximale Anzahl von Draw-Uniform-Slots
+```
+
+Wenn `m_maxDraws = 100`, dann gibt es Speicher für 100 Uniform-Blöcke:
+
+```text
+Slot 0 ... Slot 99
+```
+
+`drawIndex` darf dann nur Werte von `0` bis `99` verwenden.
+
+Darum prüfen wir:
+
+```cpp
+assert(drawIndex < kInstanceCount);
+```
+
+Für unser aktuelles Beispiel ist:
+
+```cpp
+kGridSize = 10;
+kInstanceCount = kGridSize * kGridSize; // 100
+```
+
+Das heißt:
+
+```text
+100 Cubes
+100 Materials
+100 Uniform-Slots
+100 Draw Calls
+```
+
+Wenn später mehr Objekte gezeichnet werden sollen, müssen wir mindestens eine dieser Grenzen erhöhen:
+
+- `m_maxDraws`
+- Uniform-Buffer-Größe
+- Material-Buffer-Größe
+- Scene-Graph-Node-Anzahl
+
+### Ist das schon echtes GPU Instancing?
+
+Nein. Aktuell sind es 100 normale Draw Calls:
+
+```text
+100 Nodes → 100 drawIndexedPrimitives Calls
+```
+
+Aber die Architektur ist ein wichtiger Zwischenschritt:
+
+- Meshdaten werden geteilt
+- Materialien liegen in einem Buffer-Array
+- pro Objekt gibt es einen Materialindex
+- Uniformdaten liegen in einem großen per-frame Buffer
+- jeder Draw bekommt nur einen anderen Offset
+
+Später können wir daraus echtes GPU Instancing oder bindless Rendering mit `MTL4ArgumentTable` entwickeln.
 
 ## Physically Based Rendering (PBR)
 

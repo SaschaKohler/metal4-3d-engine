@@ -65,14 +65,16 @@ target_compile_options(metal4engine PRIVATE
 # ── Metal shaders ─────────────────────────────────────────────────────────────
 # Xcode / xcrun compiles .metal → .metallib automatically when included as
 # resources. For CMake we invoke xcrun explicitly as a custom target.
-set(SHADER_SOURCE ${CMAKE_SOURCE_DIR}/shaders/triangle.metal)
+set(SHADER_SOURCE ${CMAKE_SOURCE_DIR}/shaders/mesh.metal)
 set(METALLIB_OUT  ${CMAKE_BINARY_DIR}/default.metallib)
+set(SHARED_SHADER_HEADERS ${CMAKE_SOURCE_DIR}/shared/BindingIndices.h
+                          ${CMAKE_SOURCE_DIR}/shared/Material.h)
 
 add_custom_command(
     OUTPUT  ${METALLIB_OUT}
-    COMMAND xcrun -sdk macosx metal -c ${SHADER_SOURCE} -o ${CMAKE_BINARY_DIR}/triangle.air
-    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/triangle.air -o ${METALLIB_OUT}
-    DEPENDS ${SHADER_SOURCE}
+    COMMAND xcrun -sdk macosx metal -c ${SHADER_SOURCE} -o ${CMAKE_BINARY_DIR}/mesh.air
+    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/mesh.air -o ${METALLIB_OUT}
+    DEPENDS ${SHADER_SOURCE} ${SHARED_SHADER_HEADERS}
     COMMENT "Compiling Metal shaders → default.metallib"
 )
 
@@ -99,4 +101,6 @@ set_target_properties(metal4engine PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER     "dev.saschakohler.metal4engine"
     MACOSX_BUNDLE_BUNDLE_VERSION     "0.1.0"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "0.1"
+    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+    XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ""
 )

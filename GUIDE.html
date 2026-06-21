@@ -219,6 +219,15 @@ Lighting</a>
 <ul>
 <li><a href="#was-wird-gebaut" id="toc-was-wird-gebaut">Was wird
 gebaut?</a></li>
+<li><a href="#erster-milestone-4-schritt-shared-binding-indices"
+id="toc-erster-milestone-4-schritt-shared-binding-indices">Erster
+Milestone-4-Schritt — Shared Binding Indices</a></li>
+<li><a href="#material-array-und-100-cube-instanzen"
+id="toc-material-array-und-100-cube-instanzen">Material-Array und 100
+Cube-Instanzen</a></li>
+<li><a href="#warum-der-uniform-buffer-jetzt-slots-braucht"
+id="toc-warum-der-uniform-buffer-jetzt-slots-braucht">Warum der Uniform
+Buffer jetzt Slots braucht</a></li>
 <li><a href="#physically-based-rendering-pbr"
 id="toc-physically-based-rendering-pbr">Physically Based Rendering
 (PBR)</a></li>
@@ -2640,7 +2649,8 @@ Zusammenfassung: Was Milestone 3 aufgebaut hat</h2>
                             │
 ┌───────────────────────────▼─────────────────────────────┐
 │                     GPU / MSL Layer                      │
-│  vertex_main(vertices[[0]], uniforms[[1]])                │
+│  mesh.metal: vertex_main(vertices, uniforms)              │
+│    → named bindings from shared/BindingIndices.h          │
 │    → MVP * position                                      │
 │    → normalMatrix * normal → worldNorm                   │
 │  fragment_main(worldNorm)                                │
@@ -2651,8 +2661,9 @@ keine Vertex-Daten mehr direkt. Er arbeitet mit dem Scene Graph
 (Transforms) und delegiert das Zeichnen an <code>Mesh::draw()</code>.
 Das ist die saubere Trennung zwischen <strong>Szenen-Logik</strong>
 (Node-Hierarchie) und <strong>GPU-Ressourcen</strong> (Buffer).</p>
-<p>In Milestone 4 setzen wir das erste <strong>Metal 4 Feature</strong>
-ein: <code>MTL4ArgumentTable</code> (Bindless Buffers) — um viele Meshes
+<p>In Milestone 4 bereiten wir zuerst die Binding-Struktur für
+<strong>Metal 4 Argument Tables</strong> vor. Danach setzen wir
+<code>MTL4ArgumentTable</code> (Bindless Buffers) ein — um viele Meshes
 effizienter zu rendern ohne pro-Objekt-Bind-Calls.</p>
 <hr />
 <h1 id="milestone-4-pbr-deferred-lighting">Milestone 4 — PBR Deferred
@@ -2661,6 +2672,299 @@ Lighting</h1>
 <p><strong>Physically Based Rendering</strong> — Materialien die sich
 physikalisch korrekt verhalten, und ein <strong>Deferred
 Renderer</strong> der viele Lichtquellen effizient handhabt.</p>
+<p>Bevor wir PBR und Deferred Rendering bauen, räumen wir zuerst die
+CPU/GPU-Binding-Struktur auf. Das ist kein Umweg:
+<code>MTL4ArgumentTable</code> funktioniert nur sauber, wenn klar ist,
+welcher Binding-Slot welche Bedeutung hat.</p>
+<h2 id="erster-milestone-4-schritt-shared-binding-indices">Erster
+Milestone-4-Schritt — Shared Binding Indices</h2>
+<p>Bisher standen die Buffer-Slots als rohe Zahlen direkt im CPU- und
+GPU-Code:</p>
+<div class="sourceCode" id="cb129"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb129-1"><a href="#cb129-1" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span><span class="va">m_vertexBuffer</span><span class="op">,</span> <span class="dv">0</span><span class="op">,</span> <span class="dv">0</span><span class="op">);</span> <span class="co">// Vertex Buffer auf Slot 0</span></span>
+<span id="cb129-2"><a href="#cb129-2" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span>uniformBuffer<span class="op">,</span> <span class="dv">0</span><span class="op">,</span> <span class="dv">1</span><span class="op">);</span>  <span class="co">// Uniform Buffer auf Slot 1</span></span></code></pre></div>
+<p>Und im Shader:</p>
+<pre class="metal"><code>const device VertexIn* vertices [[buffer(0)]],
+constant Uniforms&amp; uniforms     [[buffer(1)]]</code></pre>
+<p>Das funktioniert, ist aber fragil. Wenn CPU und GPU unterschiedliche
+Slot-Nummern verwenden, kompiliert das Programm oft trotzdem — aber der
+Shader liest dann falsche Daten. Solche Bugs sind schwer zu erkennen,
+weil sie wie kaputte Matrizen, kaputte Vertices oder komplett schwarzes
+Rendering aussehen können.</p>
+<p>Deshalb gibt es jetzt einen gemeinsamen Header:</p>
+<div class="sourceCode" id="cb131"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb131-1"><a href="#cb131-1" aria-hidden="true" tabindex="-1"></a><span class="pp">#pragma once</span></span>
+<span id="cb131-2"><a href="#cb131-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb131-3"><a href="#cb131-3" aria-hidden="true" tabindex="-1"></a><span class="kw">enum</span> BufferIndex <span class="op">{</span></span>
+<span id="cb131-4"><a href="#cb131-4" aria-hidden="true" tabindex="-1"></a>  BufferIndexVertices <span class="op">=</span> <span class="dv">0</span><span class="op">,</span></span>
+<span id="cb131-5"><a href="#cb131-5" aria-hidden="true" tabindex="-1"></a>  BufferIndexUniforms <span class="op">=</span> <span class="dv">1</span><span class="op">,</span></span>
+<span id="cb131-6"><a href="#cb131-6" aria-hidden="true" tabindex="-1"></a><span class="op">};</span></span></code></pre></div>
+<p>Die Datei liegt in <code>shared/BindingIndices.h</code>, nicht in
+<code>src/</code>, weil sie von beiden Welten gelesen wird:</p>
+<table>
+<thead>
+<tr>
+<th>Nutzer</th>
+<th>Include</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU / Objective-C++</td>
+<td><code>#include "../shared/BindingIndices.h"</code></td>
+</tr>
+<tr>
+<td>GPU / Metal Shader</td>
+<td><code>#include "../shared/BindingIndices.h"</code></td>
+</tr>
+</tbody>
+</table>
+<p>Damit wird aus einem numerischen Slot ein semantischer Vertrag:</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 40%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th>Name</th>
+<th style="text-align: right;">Wert</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BufferIndexVertices</code></td>
+<td style="text-align: right;">0</td>
+<td>Vertex Buffer mit <code>VertexIn</code> Daten</td>
+</tr>
+<tr>
+<td><code>BufferIndexUniforms</code></td>
+<td style="text-align: right;">1</td>
+<td>Uniform Buffer mit Model/View/Projection/Normal-Matrix</td>
+</tr>
+</tbody>
+</table>
+<p>CPU-Seite:</p>
+<div class="sourceCode" id="cb132"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb132-1"><a href="#cb132-1" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span><span class="va">m_vertexBuffer</span><span class="op">,</span> <span class="dv">0</span><span class="op">,</span> BufferIndexVertices<span class="op">);</span></span>
+<span id="cb132-2"><a href="#cb132-2" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span>uniformBuffer<span class="op">,</span> <span class="dv">0</span><span class="op">,</span> BufferIndexUniforms<span class="op">);</span></span></code></pre></div>
+<p>GPU-Seite:</p>
+<pre class="metal"><code>const device VertexIn* vertices [[buffer(BufferIndexVertices)]],
+constant Uniforms&amp; uniforms     [[buffer(BufferIndexUniforms)]]</code></pre>
+<h3 id="warum-ist-das-vorbereitung-für-mtl4argumenttable">Warum ist das
+Vorbereitung für <code>MTL4ArgumentTable</code>?</h3>
+<p><code>MTL4ArgumentTable</code> verschiebt Bindings von vielen
+einzelnen Encoder-Aufrufen in eine Tabelle. Statt pro Draw Call einzelne
+Ressourcen zu setzen, beschreibt man Ressourcen zentral über
+Binding-Indizes. Genau deshalb müssen diese Indizes vorher eindeutig
+benannt und zwischen CPU und GPU geteilt sein.</p>
+<p>Der aktuelle Schritt ist also noch kein Bindless Rendering, aber er
+macht die Architektur bindless-fähig.</p>
+<h3 id="shader-datei-umbenannt-triangle.metal-mesh.metal">Shader-Datei
+umbenannt: <code>triangle.metal</code> → <code>mesh.metal</code></h3>
+<p>Die Shader-Datei heisst jetzt <code>shaders/mesh.metal</code>, weil
+sie nicht mehr nur ein Demo-Dreieck rendert. Sie verarbeitet echte
+Mesh-Vertices aus glTF:</p>
+<ul>
+<li>Position</li>
+<li>Normalen</li>
+<li>Uniform-Matrizen</li>
+<li>Phong-Beleuchtung als aktueller Platzhalter vor PBR</li>
+</ul>
+<p>Der Name <code>mesh.metal</code> beschreibt die aktuelle
+Verantwortung besser und lässt Raum für spätere Dateien wie
+<code>gbuffer.metal</code>, <code>pbr.metal</code> oder
+<code>lighting.metal</code>.</p>
+<h3 id="cmake-abhängigkeit-für-shared-shader-header">CMake-Abhängigkeit
+für Shared Shader Header</h3>
+<p>Der Metal-Build hängt nicht nur von <code>mesh.metal</code> ab,
+sondern auch vom Shared Header:</p>
+<div class="sourceCode" id="cb134"><pre
+class="sourceCode cmake"><code class="sourceCode cmake"><span id="cb134-1"><a href="#cb134-1" aria-hidden="true" tabindex="-1"></a><span class="kw">set</span>(SHARED_SHADER_HEADERS <span class="dv">${CMAKE_SOURCE_DIR}</span>/shared/BindingIndices.h)</span>
+<span id="cb134-2"><a href="#cb134-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb134-3"><a href="#cb134-3" aria-hidden="true" tabindex="-1"></a><span class="kw">add_custom_command</span>(</span>
+<span id="cb134-4"><a href="#cb134-4" aria-hidden="true" tabindex="-1"></a>    <span class="ot">OUTPUT</span>  <span class="dv">${METALLIB_OUT}</span></span>
+<span id="cb134-5"><a href="#cb134-5" aria-hidden="true" tabindex="-1"></a>    <span class="ot">COMMAND</span> xcrun -sdk macosx metal -c <span class="dv">${SHADER_SOURCE}</span> -o <span class="dv">${CMAKE_BINARY_DIR}</span>/mesh.air</span>
+<span id="cb134-6"><a href="#cb134-6" aria-hidden="true" tabindex="-1"></a>    <span class="ot">COMMAND</span> xcrun -sdk macosx metallib <span class="dv">${CMAKE_BINARY_DIR}</span>/mesh.air -o <span class="dv">${METALLIB_OUT}</span></span>
+<span id="cb134-7"><a href="#cb134-7" aria-hidden="true" tabindex="-1"></a>    <span class="ot">DEPENDS</span> <span class="dv">${SHADER_SOURCE}</span> <span class="dv">${SHARED_SHADER_HEADERS}</span></span>
+<span id="cb134-8"><a href="#cb134-8" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div>
+<p>Ohne diese Dependency würde CMake bei einer Änderung an
+<code>shared/BindingIndices.h</code> eventuell nicht erkennen, dass
+<code>default.metallib</code> neu gebaut werden muss.</p>
+<h2 id="material-array-und-100-cube-instanzen">Material-Array und 100
+Cube-Instanzen</h2>
+<p>Der nächste Milestone-4-Schritt erweitert das Rendering von einem
+einzelnen Mesh/Material zu vielen Objektinstanzen mit unterschiedlichen
+Materialdaten.</p>
+<p>Aktuell laden wir <code>assets/cube.glb</code> einmal in einen
+einzigen <code>Mesh</code>:</p>
+<div class="sourceCode" id="cb135"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb135-1"><a href="#cb135-1" aria-hidden="true" tabindex="-1"></a><span class="va">m_mesh</span> <span class="op">=</span> Mesh<span class="op">::</span>loadGLB<span class="op">(</span><span class="va">m_device</span><span class="op">,</span> <span class="st">&quot;assets/cube.glb&quot;</span><span class="op">);</span></span></code></pre></div>
+<p>Danach erzeugen wir 100 <code>Node</code>-Instanzen in einem 10×10
+Grid. Alle Nodes zeigen auf denselben Mesh-Speicher:</p>
+<pre class="text"><code>cube node 0 ─┐
+cube node 1 ─┤
+cube node 2 ─┤
+...          ├─&gt; ein gemeinsames Mesh mit Vertex- und Index-Buffer
+cube node 99 ┘</code></pre>
+<p>Das ist bereits eine wichtige Engine-Idee: <strong>Instancing auf
+CPU-Seite</strong>. Wir duplizieren nicht die Vertexdaten, sondern nur
+die Transform- und Materialauswahl pro Objekt.</p>
+<p>Jede Node bekommt einen eigenen Materialindex:</p>
+<div class="sourceCode" id="cb137"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb137-1"><a href="#cb137-1" aria-hidden="true" tabindex="-1"></a>cube<span class="op">-&gt;</span>materialIndex <span class="op">=</span> <span class="kw">static_cast</span><span class="op">&lt;</span><span class="bu">std::</span>uint32_t<span class="op">&gt;(</span>index<span class="op">);</span></span></code></pre></div>
+<p>Der Material-Buffer enthält jetzt nicht mehr ein einzelnes Material,
+sondern ein Array:</p>
+<div class="sourceCode" id="cb138"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb138-1"><a href="#cb138-1" aria-hidden="true" tabindex="-1"></a>Material materials<span class="op">[</span>kInstanceCount<span class="op">];</span></span></code></pre></div>
+<p>Für jedes Objekt wird ein anderer Eintrag gefüllt:</p>
+<div class="sourceCode" id="cb139"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb139-1"><a href="#cb139-1" aria-hidden="true" tabindex="-1"></a>materials<span class="op">[</span>i<span class="op">].</span>baseColor <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb139-2"><a href="#cb139-2" aria-hidden="true" tabindex="-1"></a>materials<span class="op">[</span>i<span class="op">].</span>roughness <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb139-3"><a href="#cb139-3" aria-hidden="true" tabindex="-1"></a>materials<span class="op">[</span>i<span class="op">].</span>metallic <span class="op">=</span> <span class="op">...;</span></span></code></pre></div>
+<p>Auf der GPU-Seite liest der Fragment Shader dann nicht mehr:</p>
+<pre class="metal"><code>constant Material&amp; material</code></pre>
+<p>sondern:</p>
+<pre class="metal"><code>constant Material* materials [[buffer(BufferIndexMaterial)]]</code></pre>
+<p>Der konkrete Materialeintrag wird über den weitergereichten Index
+gewählt:</p>
+<pre class="metal"><code>constant Material&amp; material = materials[in.materialIndex];</code></pre>
+<h3 id="datenfluss-pro-cube">Datenfluss pro Cube</h3>
+<pre class="text"><code>Node.materialIndex
+    ↓
+Uniforms.materialIndex
+    ↓
+vertex_main: out.materialIndex = uniforms.materialIndex
+    ↓
+VertexOut.materialIndex [[flat]]
+    ↓
+fragment_main: materials[in.materialIndex]</code></pre>
+<p><code>[[flat]]</code> ist wichtig, weil <code>materialIndex</code>
+eine ID ist. IDs dürfen nicht zwischen Vertices interpoliert werden.
+Ohne <code>[[flat]]</code> könnte die Rasterizer-Stufe versuchen,
+zwischen Materialindex 0, 1, 2 usw. zu interpolieren. Für Farben ist
+Interpolation sinnvoll, für Indizes nicht.</p>
+<h2 id="warum-der-uniform-buffer-jetzt-slots-braucht">Warum der Uniform
+Buffer jetzt Slots braucht</h2>
+<p>Vorher hatten wir nur ein Objekt. Deshalb reichte ein einzelner
+Uniform-Block:</p>
+<pre class="text"><code>m_uniformBuffer
+└─ Uniforms für ein Objekt</code></pre>
+<p>Bei mehreren Draw Calls ist das falsch. Der Grund ist wichtig:</p>
+<div class="sourceCode" id="cb145"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb145-1"><a href="#cb145-1" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span>uniformBuffer<span class="op">,</span> offset<span class="op">,</span> BufferIndexUniforms<span class="op">);</span></span></code></pre></div>
+<p>Dieser Call kopiert nicht den Inhalt des Buffers. Er bindet nur:</p>
+<pre class="text"><code>Buffer-Adresse + Offset + Binding-Slot</code></pre>
+<p>Die GPU führt die Commands später aus. Wenn die CPU vor mehreren Draw
+Calls immer denselben Speicherbereich überschreibt, sehen mehrere Draw
+Calls am Ende dieselben letzten Uniform-Daten.</p>
+<p>Falsches Modell:</p>
+<pre class="text"><code>Draw 0: UniformBuffer = Cube 0
+Draw 1: UniformBuffer = Cube 1
+Draw 2: UniformBuffer = Cube 2
+...
+GPU liest später: alle Draws sehen eventuell Cube 99</code></pre>
+<p>Richtiges Modell:</p>
+<pre class="text"><code>m_uniformBuffer
+├─ Slot 0  → Uniforms für Cube 0
+├─ Slot 1  → Uniforms für Cube 1
+├─ Slot 2  → Uniforms für Cube 2
+│
+└─ Slot 99 → Uniforms für Cube 99</code></pre>
+<p>Dafür berechnen wir einen Stride:</p>
+<div class="sourceCode" id="cb149"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb149-1"><a href="#cb149-1" aria-hidden="true" tabindex="-1"></a><span class="va">m_uniformStride</span> <span class="op">=</span> alignUp<span class="op">(</span><span class="kw">sizeof</span><span class="op">(</span>Uniforms<span class="op">),</span> <span class="dv">256</span><span class="op">);</span></span></code></pre></div>
+<p><code>sizeof(Uniforms)</code> ist die tatsächliche Größe der Struct.
+<code>m_uniformStride</code> ist der Abstand zwischen zwei
+Uniform-Blöcken im Buffer.</p>
+<h3 id="warum-256-byte-alignment">Warum 256 Byte Alignment?</h3>
+<p>Metal verlangt für Buffer-Offsets, die als Constant/Uniform-Daten
+genutzt werden, eine bestimmte Ausrichtung. Typisch ist 256 Byte.
+Deshalb darf der zweite Uniform-Block nicht einfach direkt nach dem
+ersten Struct beginnen, wenn die Struct-Größe nicht passend ausgerichtet
+ist.</p>
+<p>Beispiel:</p>
+<pre class="text"><code>sizeof(Uniforms) = 224 Bytes
+m_uniformStride  = 256 Bytes</code></pre>
+<p>Dann liegen die Blöcke so:</p>
+<pre class="text"><code>Offset 0   → Cube 0
+Offset 256 → Cube 1
+Offset 512 → Cube 2
+...</code></pre>
+<p>Der Speicher zwischen <code>224</code> und <code>255</code> ist
+Padding. Er wird nicht genutzt, sorgt aber dafür, dass der nächste Block
+korrekt aligned ist.</p>
+<h3 id="was-macht-drawindex">Was macht <code>drawIndex</code>?</h3>
+<p><code>drawIndex</code> ist der aktuelle Slot-Zähler für den
+Frame.</p>
+<p>Am Anfang jedes Frames:</p>
+<div class="sourceCode" id="cb152"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb152-1"><a href="#cb152-1" aria-hidden="true" tabindex="-1"></a><span class="bu">std::</span>size_t drawIndex <span class="op">=</span> <span class="dv">0</span><span class="op">;</span></span></code></pre></div>
+<p>Bei jedem Node mit Mesh:</p>
+<div class="sourceCode" id="cb153"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb153-1"><a href="#cb153-1" aria-hidden="true" tabindex="-1"></a><span class="bu">std::</span>size_t uniformOffset <span class="op">=</span> drawIndex <span class="op">*</span> uniformStride<span class="op">;</span></span></code></pre></div>
+<p>Dann wird genau in diesen Slot geschrieben:</p>
+<div class="sourceCode" id="cb154"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb154-1"><a href="#cb154-1" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> dst <span class="op">=</span> <span class="kw">static_cast</span><span class="op">&lt;</span><span class="bu">std::</span>uint8_t<span class="op">*&gt;(</span>uniformBuffer<span class="op">-&gt;</span>contents<span class="op">())</span> <span class="op">+</span> uniformOffset<span class="op">;</span></span>
+<span id="cb154-2"><a href="#cb154-2" aria-hidden="true" tabindex="-1"></a><span class="bu">std::</span>memcpy<span class="op">(</span>dst<span class="op">,</span> <span class="op">&amp;</span>u<span class="op">,</span> <span class="kw">sizeof</span><span class="op">(</span>Uniforms<span class="op">));</span></span></code></pre></div>
+<p>Danach wird der Draw Call mit diesem Offset gebunden:</p>
+<div class="sourceCode" id="cb155"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb155-1"><a href="#cb155-1" aria-hidden="true" tabindex="-1"></a>enc<span class="op">-&gt;</span>setVertexBuffer<span class="op">(</span>uniformBuffer<span class="op">,</span> uniformOffset<span class="op">,</span> BufferIndexUniforms<span class="op">);</span></span></code></pre></div>
+<p>Dann wird erhöht:</p>
+<div class="sourceCode" id="cb156"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb156-1"><a href="#cb156-1" aria-hidden="true" tabindex="-1"></a>drawIndex<span class="op">++;</span></span></code></pre></div>
+<h3
+id="bestimmt-drawindex-wie-viele-objekte-gezeichnet-werden-können">Bestimmt
+<code>drawIndex</code>, wie viele Objekte gezeichnet werden können?</h3>
+<p>Nicht direkt. <code>drawIndex</code> ist nur der aktuelle Zähler. Die
+maximale Anzahl wird durch die Größe des Uniform Buffers bestimmt:</p>
+<div class="sourceCode" id="cb157"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb157-1"><a href="#cb157-1" aria-hidden="true" tabindex="-1"></a><span class="va">m_uniformBuffer</span> <span class="op">=</span> <span class="va">m_device</span><span class="op">-&gt;</span>newBuffer<span class="op">(</span></span>
+<span id="cb157-2"><a href="#cb157-2" aria-hidden="true" tabindex="-1"></a>    <span class="va">m_uniformStride</span> <span class="op">*</span> <span class="va">m_maxDraws</span><span class="op">,</span></span>
+<span id="cb157-3"><a href="#cb157-3" aria-hidden="true" tabindex="-1"></a>    MTL<span class="op">::</span>ResourceStorageModeShared<span class="op">);</span></span></code></pre></div>
+<p>Hier bedeutet:</p>
+<pre class="text"><code>m_maxDraws = maximale Anzahl von Draw-Uniform-Slots</code></pre>
+<p>Wenn <code>m_maxDraws = 100</code>, dann gibt es Speicher für 100
+Uniform-Blöcke:</p>
+<pre class="text"><code>Slot 0 ... Slot 99</code></pre>
+<p><code>drawIndex</code> darf dann nur Werte von <code>0</code> bis
+<code>99</code> verwenden.</p>
+<p>Darum prüfen wir:</p>
+<div class="sourceCode" id="cb160"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb160-1"><a href="#cb160-1" aria-hidden="true" tabindex="-1"></a><span class="ot">assert</span><span class="op">(</span>drawIndex <span class="op">&lt;</span> kInstanceCount<span class="op">);</span></span></code></pre></div>
+<p>Für unser aktuelles Beispiel ist:</p>
+<div class="sourceCode" id="cb161"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb161-1"><a href="#cb161-1" aria-hidden="true" tabindex="-1"></a>kGridSize <span class="op">=</span> <span class="dv">10</span><span class="op">;</span></span>
+<span id="cb161-2"><a href="#cb161-2" aria-hidden="true" tabindex="-1"></a>kInstanceCount <span class="op">=</span> kGridSize <span class="op">*</span> kGridSize<span class="op">;</span> <span class="co">// 100</span></span></code></pre></div>
+<p>Das heißt:</p>
+<pre class="text"><code>100 Cubes
+100 Materials
+100 Uniform-Slots
+100 Draw Calls</code></pre>
+<p>Wenn später mehr Objekte gezeichnet werden sollen, müssen wir
+mindestens eine dieser Grenzen erhöhen:</p>
+<ul>
+<li><code>m_maxDraws</code></li>
+<li>Uniform-Buffer-Größe</li>
+<li>Material-Buffer-Größe</li>
+<li>Scene-Graph-Node-Anzahl</li>
+</ul>
+<h3 id="ist-das-schon-echtes-gpu-instancing">Ist das schon echtes GPU
+Instancing?</h3>
+<p>Nein. Aktuell sind es 100 normale Draw Calls:</p>
+<pre class="text"><code>100 Nodes → 100 drawIndexedPrimitives Calls</code></pre>
+<p>Aber die Architektur ist ein wichtiger Zwischenschritt:</p>
+<ul>
+<li>Meshdaten werden geteilt</li>
+<li>Materialien liegen in einem Buffer-Array</li>
+<li>pro Objekt gibt es einen Materialindex</li>
+<li>Uniformdaten liegen in einem großen per-frame Buffer</li>
+<li>jeder Draw bekommt nur einen anderen Offset</li>
+</ul>
+<p>Später können wir daraus echtes GPU Instancing oder bindless
+Rendering mit <code>MTL4ArgumentTable</code> entwickeln.</p>
 <h2 id="physically-based-rendering-pbr">Physically Based Rendering
 (PBR)</h2>
 <p>PBR-Materialien werden durch wenige intuitive Parameter
@@ -2755,25 +3059,25 @@ Lichter = 150 Operationen statt 5000.</p>
 <h2 id="mtl4commandencoder-unified-encoder">MTL4CommandEncoder — Unified
 Encoder</h2>
 <p>Ab Milestone 4 wechseln wir auf den Metal 4 Unified Encoder:</p>
-<div class="sourceCode" id="cb132"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb132-1"><a href="#cb132-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 1-3: Separate Encoder für jeden Pass</span></span>
-<span id="cb132-2"><a href="#cb132-2" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> geoEncoder   <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
-<span id="cb132-3"><a href="#cb132-3" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode geometry ...</span></span>
-<span id="cb132-4"><a href="#cb132-4" aria-hidden="true" tabindex="-1"></a>geoEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
-<span id="cb132-5"><a href="#cb132-5" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb132-6"><a href="#cb132-6" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> lightEncoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
-<span id="cb132-7"><a href="#cb132-7" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode lighting ...</span></span>
-<span id="cb132-8"><a href="#cb132-8" aria-hidden="true" tabindex="-1"></a>lightEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
-<span id="cb132-9"><a href="#cb132-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb132-10"><a href="#cb132-10" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 4: Ein Encoder für alles</span></span>
-<span id="cb132-11"><a href="#cb132-11" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> encoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>desc<span class="op">);</span>  <span class="co">// MTL4CommandEncoder</span></span>
-<span id="cb132-12"><a href="#cb132-12" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
-<span id="cb132-13"><a href="#cb132-13" aria-hidden="true" tabindex="-1"></a><span class="co">// ... geometry ...</span></span>
-<span id="cb132-14"><a href="#cb132-14" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
-<span id="cb132-15"><a href="#cb132-15" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
-<span id="cb132-16"><a href="#cb132-16" aria-hidden="true" tabindex="-1"></a><span class="co">// ... lighting ...</span></span>
-<span id="cb132-17"><a href="#cb132-17" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
-<span id="cb132-18"><a href="#cb132-18" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span></code></pre></div>
+<div class="sourceCode" id="cb167"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb167-1"><a href="#cb167-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 1-3: Separate Encoder für jeden Pass</span></span>
+<span id="cb167-2"><a href="#cb167-2" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> geoEncoder   <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
+<span id="cb167-3"><a href="#cb167-3" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode geometry ...</span></span>
+<span id="cb167-4"><a href="#cb167-4" aria-hidden="true" tabindex="-1"></a>geoEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
+<span id="cb167-5"><a href="#cb167-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb167-6"><a href="#cb167-6" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> lightEncoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
+<span id="cb167-7"><a href="#cb167-7" aria-hidden="true" tabindex="-1"></a><span class="co">// ... encode lighting ...</span></span>
+<span id="cb167-8"><a href="#cb167-8" aria-hidden="true" tabindex="-1"></a>lightEncoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span>
+<span id="cb167-9"><a href="#cb167-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb167-10"><a href="#cb167-10" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal 4: Ein Encoder für alles</span></span>
+<span id="cb167-11"><a href="#cb167-11" aria-hidden="true" tabindex="-1"></a><span class="kw">auto</span><span class="op">*</span> encoder <span class="op">=</span> cmdBuf<span class="op">-&gt;</span>renderCommandEncoder<span class="op">(</span>desc<span class="op">);</span>  <span class="co">// MTL4CommandEncoder</span></span>
+<span id="cb167-12"><a href="#cb167-12" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>geoPassDesc<span class="op">);</span></span>
+<span id="cb167-13"><a href="#cb167-13" aria-hidden="true" tabindex="-1"></a><span class="co">// ... geometry ...</span></span>
+<span id="cb167-14"><a href="#cb167-14" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
+<span id="cb167-15"><a href="#cb167-15" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>beginPass<span class="op">(</span>lightPassDesc<span class="op">);</span></span>
+<span id="cb167-16"><a href="#cb167-16" aria-hidden="true" tabindex="-1"></a><span class="co">// ... lighting ...</span></span>
+<span id="cb167-17"><a href="#cb167-17" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endPass<span class="op">();</span></span>
+<span id="cb167-18"><a href="#cb167-18" aria-hidden="true" tabindex="-1"></a>encoder<span class="op">-&gt;</span>endEncoding<span class="op">();</span></span></code></pre></div>
 <p><strong>Vorteil</strong>: Weniger CPU-Overhead, bessere
 GPU-Scheduling-Möglichkeiten.</p>
 <hr />
@@ -2793,17 +3097,17 @@ Frame N:    640×360  ──┘             ↑ temporal accumulation</code></pr
 <p><strong>Motion Vectors</strong>: Für jeden Pixel, in welche Richtung
 hat er sich seit dem letzten Frame bewegt? Der G-Buffer aus Milestone 4
 liefert die Tiefeninformation um Motion Vectors zu berechnen.</p>
-<div class="sourceCode" id="cb134"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb134-1"><a href="#cb134-1" aria-hidden="true" tabindex="-1"></a>MTLFXTemporalScalerDescriptor<span class="op">*</span> desc <span class="op">=</span> <span class="op">[[</span><span class="at">MTLFXTemporalScalerDescriptor alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
-<span id="cb134-2"><a href="#cb134-2" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputWidth    </span><span class="op">=</span><span class="at"> renderWidth;   </span><span class="co">// 640</span></span>
-<span id="cb134-3"><a href="#cb134-3" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputHeight   </span><span class="op">=</span><span class="at"> renderHeight;  </span><span class="co">// 360</span></span>
-<span id="cb134-4"><a href="#cb134-4" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputWidth   </span><span class="op">=</span><span class="at"> displayWidth;  </span><span class="co">// 1280</span></span>
-<span id="cb134-5"><a href="#cb134-5" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputHeight  </span><span class="op">=</span><span class="at"> displayHeight; </span><span class="co">// 720</span></span>
-<span id="cb134-6"><a href="#cb134-6" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">colorTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatRGBA16Float;</span></span>
-<span id="cb134-7"><a href="#cb134-7" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">motionTextureFormat    </span><span class="op">=</span><span class="at"> MTLPixelFormatRG16Float;</span></span>
-<span id="cb134-8"><a href="#cb134-8" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">depthTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatDepth32Float;</span></span>
-<span id="cb134-9"><a href="#cb134-9" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb134-10"><a href="#cb134-10" aria-hidden="true" tabindex="-1"></a><span class="at">id</span><span class="op">&lt;</span><span class="at">MTLFXTemporalScaler</span><span class="op">&gt;</span><span class="at"> scaler </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">desc newTemporalScalerWithDevice</span><span class="op">:</span><span class="at">device</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb169"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb169-1"><a href="#cb169-1" aria-hidden="true" tabindex="-1"></a>MTLFXTemporalScalerDescriptor<span class="op">*</span> desc <span class="op">=</span> <span class="op">[[</span><span class="at">MTLFXTemporalScalerDescriptor alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
+<span id="cb169-2"><a href="#cb169-2" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputWidth    </span><span class="op">=</span><span class="at"> renderWidth;   </span><span class="co">// 640</span></span>
+<span id="cb169-3"><a href="#cb169-3" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">inputHeight   </span><span class="op">=</span><span class="at"> renderHeight;  </span><span class="co">// 360</span></span>
+<span id="cb169-4"><a href="#cb169-4" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputWidth   </span><span class="op">=</span><span class="at"> displayWidth;  </span><span class="co">// 1280</span></span>
+<span id="cb169-5"><a href="#cb169-5" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">outputHeight  </span><span class="op">=</span><span class="at"> displayHeight; </span><span class="co">// 720</span></span>
+<span id="cb169-6"><a href="#cb169-6" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">colorTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatRGBA16Float;</span></span>
+<span id="cb169-7"><a href="#cb169-7" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">motionTextureFormat    </span><span class="op">=</span><span class="at"> MTLPixelFormatRG16Float;</span></span>
+<span id="cb169-8"><a href="#cb169-8" aria-hidden="true" tabindex="-1"></a><span class="at">desc</span><span class="op">.</span><span class="at">depthTextureFormat     </span><span class="op">=</span><span class="at"> MTLPixelFormatDepth32Float;</span></span>
+<span id="cb169-9"><a href="#cb169-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb169-10"><a href="#cb169-10" aria-hidden="true" tabindex="-1"></a><span class="at">id</span><span class="op">&lt;</span><span class="at">MTLFXTemporalScaler</span><span class="op">&gt;</span><span class="at"> scaler </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">desc newTemporalScalerWithDevice</span><span class="op">:</span><span class="at">device</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
 <h2 id="frame-interpolation-metal-4-neu">Frame Interpolation (Metal 4
 neu)</h2>
 <p>Noch einen Schritt weiter: MetalFX kann zwischen zwei gerenderten
@@ -2838,23 +3142,23 @@ eines Meshes</li>
 <li><strong>TLAS</strong>: Referenziert BLASes mit ihrer
 World-Transform</li>
 </ul>
-<div class="sourceCode" id="cb137"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb137-1"><a href="#cb137-1" aria-hidden="true" tabindex="-1"></a><span class="co">// BLAS bauen (einmalig pro Mesh, teuer)</span></span>
-<span id="cb137-2"><a href="#cb137-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureTriangleGeometryDescriptor<span class="op">*</span> geoDesc <span class="op">=</span> <span class="op">...;</span></span>
-<span id="cb137-3"><a href="#cb137-3" aria-hidden="true" tabindex="-1"></a>geoDesc<span class="op">.</span>vertexBuffer <span class="op">=</span> <span class="va">m_vertexBuffer</span><span class="op">;</span></span>
-<span id="cb137-4"><a href="#cb137-4" aria-hidden="true" tabindex="-1"></a>MTLPrimitiveAccelerationStructureDescriptor<span class="op">*</span> blasDesc <span class="op">=</span> <span class="op">...;</span></span>
-<span id="cb137-5"><a href="#cb137-5" aria-hidden="true" tabindex="-1"></a>blasDesc<span class="op">.</span>geometryDescriptors <span class="op">=</span> <span class="er">@</span><span class="op">[</span>geoDesc<span class="op">];</span></span>
-<span id="cb137-6"><a href="#cb137-6" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> blas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>blasDesc<span class="op">];</span></span>
-<span id="cb137-7"><a href="#cb137-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb137-8"><a href="#cb137-8" aria-hidden="true" tabindex="-1"></a><span class="co">// TLAS bauen (jeden Frame wenn sich Objekte bewegen)</span></span>
-<span id="cb137-9"><a href="#cb137-9" aria-hidden="true" tabindex="-1"></a>MTLInstanceAccelerationStructureDescriptor<span class="op">*</span> tlasDesc <span class="op">=</span> <span class="op">...;</span></span>
-<span id="cb137-10"><a href="#cb137-10" aria-hidden="true" tabindex="-1"></a>tlasDesc<span class="op">.</span>instancedAccelerationStructures <span class="op">=</span> <span class="er">@</span><span class="op">[</span>blas<span class="op">,</span> blas2<span class="op">,</span> <span class="op">...];</span></span>
-<span id="cb137-11"><a href="#cb137-11" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> tlas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>tlasDesc<span class="op">];</span></span></code></pre></div>
+<div class="sourceCode" id="cb172"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb172-1"><a href="#cb172-1" aria-hidden="true" tabindex="-1"></a><span class="co">// BLAS bauen (einmalig pro Mesh, teuer)</span></span>
+<span id="cb172-2"><a href="#cb172-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureTriangleGeometryDescriptor<span class="op">*</span> geoDesc <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb172-3"><a href="#cb172-3" aria-hidden="true" tabindex="-1"></a>geoDesc<span class="op">.</span>vertexBuffer <span class="op">=</span> <span class="va">m_vertexBuffer</span><span class="op">;</span></span>
+<span id="cb172-4"><a href="#cb172-4" aria-hidden="true" tabindex="-1"></a>MTLPrimitiveAccelerationStructureDescriptor<span class="op">*</span> blasDesc <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb172-5"><a href="#cb172-5" aria-hidden="true" tabindex="-1"></a>blasDesc<span class="op">.</span>geometryDescriptors <span class="op">=</span> <span class="er">@</span><span class="op">[</span>geoDesc<span class="op">];</span></span>
+<span id="cb172-6"><a href="#cb172-6" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> blas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>blasDesc<span class="op">];</span></span>
+<span id="cb172-7"><a href="#cb172-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb172-8"><a href="#cb172-8" aria-hidden="true" tabindex="-1"></a><span class="co">// TLAS bauen (jeden Frame wenn sich Objekte bewegen)</span></span>
+<span id="cb172-9"><a href="#cb172-9" aria-hidden="true" tabindex="-1"></a>MTLInstanceAccelerationStructureDescriptor<span class="op">*</span> tlasDesc <span class="op">=</span> <span class="op">...;</span></span>
+<span id="cb172-10"><a href="#cb172-10" aria-hidden="true" tabindex="-1"></a>tlasDesc<span class="op">.</span>instancedAccelerationStructures <span class="op">=</span> <span class="er">@</span><span class="op">[</span>blas<span class="op">,</span> blas2<span class="op">,</span> <span class="op">...];</span></span>
+<span id="cb172-11"><a href="#cb172-11" aria-hidden="true" tabindex="-1"></a>id<span class="op">&lt;</span>MTLAccelerationStructure<span class="op">&gt;</span> tlas <span class="op">=</span> <span class="op">[</span>device newAccelerationStructureWithDescriptor<span class="op">:</span>tlasDesc<span class="op">];</span></span></code></pre></div>
 <p>Metal 4 bietet neue <strong>Build-Flags</strong> für Speed/Memory
 Trade-off:</p>
-<div class="sourceCode" id="cb138"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb138-1"><a href="#cb138-1" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastBuild   <span class="co">// Schneller Build, mehr RAM</span></span>
-<span id="cb138-2"><a href="#cb138-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastTrace   <span class="co">// Langsamerer Build, schnelleres Tracing</span></span></code></pre></div>
+<div class="sourceCode" id="cb173"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb173-1"><a href="#cb173-1" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastBuild   <span class="co">// Schneller Build, mehr RAM</span></span>
+<span id="cb173-2"><a href="#cb173-2" aria-hidden="true" tabindex="-1"></a>MTLAccelerationStructureBuildFlagPreferFastTrace   <span class="co">// Langsamerer Build, schnelleres Tracing</span></span></code></pre></div>
 <h2 id="inline-ray-tracing-im-fragment-shader">Inline Ray Tracing im
 Fragment Shader</h2>
 <pre class="metal"><code>// Im Fragment Shader (Lighting Pass):
@@ -2896,13 +3200,13 @@ Pro/Max)</h2>
 sind spezialisierte ML-Recheneinheiten die Metal Performance Primitives
 (MPP) nutzen — 10-100× schneller als General-Purpose GPU-Shader für
 Matrix-Operationen.</p>
-<div class="sourceCode" id="cb141"><pre
-class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb141-1"><a href="#cb141-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal Performance Primitives für quantisierte Inferenz</span></span>
-<span id="cb141-2"><a href="#cb141-2" aria-hidden="true" tabindex="-1"></a>MPSGraph<span class="op">*</span> graph <span class="op">=</span> <span class="op">[[</span><span class="at">MPSGraph alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
-<span id="cb141-3"><a href="#cb141-3" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> inputTensor  </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph placeholderWithShape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">1</span><span class="op">,</span><span class="at"> @</span><span class="dv">64</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
-<span id="cb141-4"><a href="#cb141-4" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> weightTensor </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph constantWithData</span><span class="op">:</span><span class="at">weightsData shape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">64</span><span class="op">,</span><span class="at"> @</span><span class="dv">128</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
-<span id="cb141-5"><a href="#cb141-5" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> output       </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph matMulWithPrimaryTensor</span><span class="op">:</span><span class="at">inputTensor</span></span>
-<span id="cb141-6"><a href="#cb141-6" aria-hidden="true" tabindex="-1"></a><span class="at">                                             secondaryTensor</span><span class="op">:</span><span class="at">weightTensor name</span><span class="op">:</span><span class="at">nil</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
+<div class="sourceCode" id="cb176"><pre
+class="sourceCode cpp"><code class="sourceCode cpp"><span id="cb176-1"><a href="#cb176-1" aria-hidden="true" tabindex="-1"></a><span class="co">// Metal Performance Primitives für quantisierte Inferenz</span></span>
+<span id="cb176-2"><a href="#cb176-2" aria-hidden="true" tabindex="-1"></a>MPSGraph<span class="op">*</span> graph <span class="op">=</span> <span class="op">[[</span><span class="at">MPSGraph alloc</span><span class="op">]</span><span class="at"> init</span><span class="op">]</span><span class="at">;</span></span>
+<span id="cb176-3"><a href="#cb176-3" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> inputTensor  </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph placeholderWithShape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">1</span><span class="op">,</span><span class="at"> @</span><span class="dv">64</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
+<span id="cb176-4"><a href="#cb176-4" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> weightTensor </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph constantWithData</span><span class="op">:</span><span class="at">weightsData shape</span><span class="op">:</span><span class="at">@</span><span class="op">[</span><span class="at">@</span><span class="dv">64</span><span class="op">,</span><span class="at"> @</span><span class="dv">128</span><span class="op">]</span><span class="at"> </span><span class="op">...]</span><span class="at">;</span></span>
+<span id="cb176-5"><a href="#cb176-5" aria-hidden="true" tabindex="-1"></a><span class="at">MPSGraphTensor</span><span class="op">*</span><span class="at"> output       </span><span class="op">=</span><span class="at"> </span><span class="op">[</span><span class="at">graph matMulWithPrimaryTensor</span><span class="op">:</span><span class="at">inputTensor</span></span>
+<span id="cb176-6"><a href="#cb176-6" aria-hidden="true" tabindex="-1"></a><span class="at">                                             secondaryTensor</span><span class="op">:</span><span class="at">weightTensor name</span><span class="op">:</span><span class="at">nil</span><span class="op">]</span><span class="at">;</span></span></code></pre></div>
 <h2 id="anwendungsfall-neural-material-synthesis">Anwendungsfall: Neural
 Material Synthesis</h2>
 <p>Statt gesampelter Texturen (Albedo, Normal, Roughness) kann ein
