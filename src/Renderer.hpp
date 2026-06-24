@@ -37,13 +37,17 @@ private:
   void buildLightBuffer();
   void buildDepthStencilState();
   void buildScene();
+  void buildEnvironmentMap();
 
   MTL::Device *m_device{nullptr};
   MTL::CommandQueue *m_commandQueue{nullptr};
   MTL::RenderPipelineState *m_pipelineState{nullptr};
   MTL::DepthStencilState *m_depthStencilState{nullptr};
+  MTL::ComputePipelineState *m_equirectToCubePipeline{nullptr};
   MTL::Texture *m_renderTexture{nullptr};
   MTL::Texture *m_outputTexture{nullptr};
+  MTL::Texture *loadEquirectangularTexture(const std::string &path);
+  MTL::Texture *m_environmentCubemap{nullptr};
   MTL::Buffer *m_uniformBuffer{nullptr};
   MTL::Buffer *m_materialBuffer{nullptr};
   MTL::Buffer *m_lightBuffer{nullptr};

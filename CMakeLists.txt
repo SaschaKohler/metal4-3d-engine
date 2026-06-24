@@ -19,6 +19,7 @@ set(ENGINE_SOURCES
     src/Renderer.mm
     src/Mesh.mm
     src/MetalImpl.mm        # metal-cpp implementation (defined once)
+    vendor/stb/stb_image_impl.cpp  # STB image implementation
 )
 
 # --- stb_image single-header download ---
@@ -89,7 +90,11 @@ target_compile_options(metal4engine PRIVATE
 # ── Metal shaders ─────────────────────────────────────────────────────────────
 # Xcode / xcrun compiles .metal → .metallib automatically when included as
 # resources. For CMake we invoke xcrun explicitly as a custom target.
-set(SHADER_SOURCE ${CMAKE_SOURCE_DIR}/shaders/mesh.metal)
+set(SHADER_MESH_AIR
+    ${CMAKE_SOURCE_DIR}/shaders/mesh.metal)
+set(SHADER_IBL_AIR
+    ${CMAKE_SOURCE_DIR}/shaders/ibl_equirect_to_cube.metal)
+
 set(METALLIB_OUT  ${CMAKE_BINARY_DIR}/default.metallib)
 set(SHARED_SHADER_HEADERS ${CMAKE_SOURCE_DIR}/shared/BindingIndices.h
                           ${CMAKE_SOURCE_DIR}/shared/Material.h
@@ -99,9 +104,10 @@ set(SHARED_SHADER_HEADERS ${CMAKE_SOURCE_DIR}/shared/BindingIndices.h
 
 add_custom_command(
     OUTPUT  ${METALLIB_OUT}
-    COMMAND xcrun -sdk macosx metal -c ${SHADER_SOURCE} -o ${CMAKE_BINARY_DIR}/mesh.air
-    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/mesh.air -o ${METALLIB_OUT}
-    DEPENDS ${SHADER_SOURCE} ${SHARED_SHADER_HEADERS}
+    COMMAND xcrun -sdk macosx metal -c ${SHADER_MESH_AIR} -o ${CMAKE_BINARY_DIR}/mesh.air
+    COMMAND xcrun -sdk macosx metal -c ${SHADER_IBL_AIR} -o ${CMAKE_BINARY_DIR}/ibl.air
+    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/mesh.air ${CMAKE_BINARY_DIR}/ibl.air -o ${METALLIB_OUT}
+    DEPENDS ${SHADER_MESH_AIR} ${SHADER_IBL_AIR} ${SHARED_SHADER_HEADERS}
     COMMENT "Compiling Metal shaders → default.metallib"
 )
 

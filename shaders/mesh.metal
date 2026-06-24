@@ -127,5 +127,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
   // Gamma correction: linear -> sRGB (gamma 2.2)
   color = pow(color, float3(1.0 / 2.2));
 
+  // float3 reflected = reflect(-V, N);
+  // float3 envColor = envMap.sample(envSampler, reflected).rgb;
+
   return float4(color, 1.0);
 }

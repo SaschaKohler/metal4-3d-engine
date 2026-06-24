@@ -1,3 +1,11 @@
+
+#include "Metal/MTLCommandBuffer.hpp"
+#include "Metal/MTLComputeCommandEncoder.hpp"
+#include "Metal/MTLLibrary.hpp"
+#include "Metal/MTLSampler.hpp"
+#include "Metal/MTLTypes.hpp"
+#include "stb_image.h"
+
 #include "Renderer.hpp"
 #include "../shared/BindingIndices.h"
 #include "../shared/Material.h"
@@ -44,6 +52,7 @@ Renderer::Renderer(MTL::Device *device) : m_device(device->retain()) {
   buildMaterialBuffer();
   buildLightBuffer();
   buildScene();
+  buildEnvironmentMap();
 }
 
 Renderer::~Renderer() {
@@ -169,6 +178,95 @@ void Renderer::buildDepthStencilState() {
   desc->setDepthWriteEnabled(true);
   m_depthStencilState = m_device->newDepthStencilState(desc);
   desc->release();
+}
+
+// ---------------------------------------------------------------------------
+MTL::Texture *Renderer::loadEquirectangularTexture(const std::string &path) {
+  int width, height, channels;
+  float *data = stbi_loadf(path.c_str(), &width, &height, &channels, 4);
+  if (!data) {
+    printf("[Renderer] Could not load EnvironmentMap for Equirectangular "
+           "Texture.");
+    return nullptr;
+  }
+
+  MTL::TextureDescriptor *desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setTextureType(MTL::TextureType2D);
+  desc->setWidth(width);
+  desc->setHeight(height);
+  desc->setPixelFormat(MTL::PixelFormatRGBA32Float);
+  desc->setMipmapLevelCount(1);
+  desc->setUsage(MTL::TextureUsageShaderRead);
+
+  MTL::Texture *texture = m_device->newTexture(desc);
+  texture->replaceRegion(MTL::Region(0, 0, 0, width, height, 1), 0, data,
+                         width * 4 * sizeof(float));
+
+  stbi_image_free(data);
+  desc->release();
+
+  return texture;
+}
+
+// ---------------------------------------------------------------------------
+void Renderer::buildEnvironmentMap() {
+  MTL::Texture *equirectTexture =
+      loadEquirectangularTexture("assets/hdri/kloppenheim_03_4k.hdr");
+  if (!equirectTexture) {
+    return;
+  }
+  const uint faceSize = 1024;
+
+  MTL::TextureDescriptor *cubeDesc = MTL::TextureDescriptor::alloc()->init();
+  cubeDesc->setTextureType(MTL::TextureTypeCube);
+  cubeDesc->setWidth(faceSize);
+  cubeDesc->setHeight(faceSize);
+  cubeDesc->setPixelFormat(MTL::PixelFormatRGBA32Float);
+  cubeDesc->setMipmapLevelCount(1);
+  cubeDesc->setUsage(MTL::TextureUsageShaderWrite |
+                     MTL::TextureUsageShaderRead);
+
+  m_environmentCubemap = m_device->newTexture(cubeDesc);
+
+  // Pipeline holen
+  NS::Error *error = nullptr;
+  MTL::Function *kernel = m_library->newFunction(NS::String::string(
+      "equirectToCubemap", NS::StringEncoding::UTF8StringEncoding));
+  m_equirectToCubePipeline = m_device->newComputePipelineState(kernel, &error);
+
+  // Command Encoder
+  MTL::CommandBuffer *cmdBuffer = m_commandQueue->commandBuffer();
+  MTL::ComputeCommandEncoder *encoder = cmdBuffer->computeCommandEncoder();
+
+  encoder->setComputePipelineState(m_equirectToCubePipeline);
+  encoder->setTexture(equirectTexture, 0);
+  encoder->setTexture(m_environmentCubemap, 1);
+
+  MTL::SamplerDescriptor *samplerDesc = MTL::SamplerDescriptor::alloc()->init();
+  samplerDesc->setMinFilter(MTL::SamplerMinMagFilterLinear);
+  samplerDesc->setMagFilter(MTL::SamplerMinMagFilterLinear);
+  samplerDesc->setSAddressMode(MTL::SamplerAddressModeRepeat);
+  samplerDesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+  MTL::SamplerState *sampler = m_device->newSamplerState(samplerDesc);
+
+  encoder->setSamplerState(sampler, 0);
+
+  MTL::Size threadsPerGroup = MTL::Size::Make(8, 8, 1);
+  MTL::Size threadgroups =
+      MTL::Size::Make((faceSize + 7) / 8, (faceSize + 7) / 8, 6);
+
+  encoder->dispatchThreadgroups(threadgroups, threadsPerGroup);
+
+  encoder->endEncoding();
+  cmdBuffer->commit();
+  cmdBuffer->waitUntilCompleted();
+
+  // Cleanup
+  sampler->release();
+  samplerDesc->release();
+  equirectTexture->release();
+  cubeDesc->release();
+  kernel->release();
 }
 
 // ---------------------------------------------------------------------------
@@ -440,11 +538,34 @@ void Renderer::draw(CA::MetalDrawable *drawable, MTL::Texture *depthTexture,
   enc->setViewport(
       MTL::Viewport{0.0, 0.0, viewportWidth, viewportHeight, 0.0, 1.0});
   std::size_t drawIndex = 0;
+
+  //
+  //
+  // test
+  /* MTL::SamplerDescriptor *samplerDesc =
+   * MTL::SamplerDescriptor::alloc()->init(); */
+  /* samplerDesc->setMinFilter(MTL::SamplerMinMagFilterLinear); */
+  /* samplerDesc->setMagFilter(MTL::SamplerMinMagFilterLinear); */
+  /* samplerDesc->setMipFilter(MTL::SamplerMipFilterLinear); */
+  /* samplerDesc->setSAddressMode(MTL::SamplerAddressModeClampToEdge); */
+  /* samplerDesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge); */
+  /* samplerDesc->setRAddressMode(MTL::SamplerAddressModeClampToEdge); */
+  /* MTL::SamplerState *envSampler = m_device->newSamplerState(samplerDesc); */
+  /**/
+  /* enc->setFragmentSamplerState(envSampler, 0); */
+  /* enc->setFragmentTexture(m_environmentCubemap, 0); */
+  // test
+  //
+
   drawNode(*m_sceneRoot, enc, m_uniformBuffer, m_uniformStride, drawIndex,
            m_materialBuffer, m_lightBuffer, view, proj, m_camera.eye());
 
   enc->endEncoding();
-
+  // ... nach enc->endEncoding() ...
+  /* samplerDesc->release(); */
+  /* envSampler->release(); */
+  //
+  //
   id<MTLFXSpatialScaler> scaler = (__bridge id<MTLFXSpatialScaler>)m_upscaler;
   scaler.colorTexture = (__bridge id<MTLTexture>)m_renderTexture;
   scaler.outputTexture = (__bridge id<MTLTexture>)m_outputTexture;
