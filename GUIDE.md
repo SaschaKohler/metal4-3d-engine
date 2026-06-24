@@ -2800,63 +2800,559 @@ Ray Traced Shadows mit wenigen Samples (z.B. 1 Sample/Pixel) sind **verrauscht**
 
 ---
 
-# Milestone 7 — Neural Rendering
+# Milestone 4 — PBR Lighting
 
-## Was wird gebaut?
-
-**Machine Learning direkt im Shader** — ein kleines neuronales Netz das Material-Eigenschaften synthetisiert oder als AI-Denoiser arbeitet.
-
-## Tensoren in MSL (Metal 4 neu)
-
-Metal 4 führt native Tensor-Typen in MSL ein:
-
-```metal
-// Ein Tensor ist ein N-dimensionales Array auf der GPU
-tensor<float, shape<128, 64>> weights;  // 128×64 Gewichtsmatrix
-tensor<float, shape<1, 64>>   input;    // Input-Vektor
-
-// Matrix-Multiplikation direkt in MSL
-tensor<float, shape<1, 128>> output = metal::multiply(input, weights);
-```
-
-## Neural Accelerators (M5 Pro/Max)
-
-Die neuen **Neural Accelerators** auf M5 Pro und M5 Max sind spezialisierte ML-Recheneinheiten die Metal Performance Primitives (MPP) nutzen — 10-100× schneller als General-Purpose GPU-Shader für Matrix-Operationen.
-
-```cpp
-// Metal Performance Primitives für quantisierte Inferenz
-MPSGraph* graph = [[MPSGraph alloc] init];
-MPSGraphTensor* inputTensor  = [graph placeholderWithShape:@[@1, @64] ...];
-MPSGraphTensor* weightTensor = [graph constantWithData:weightsData shape:@[@64, @128] ...];
-MPSGraphTensor* output       = [graph matMulWithPrimaryTensor:inputTensor
-                                             secondaryTensor:weightTensor name:nil];
-```
-
-## Anwendungsfall: Neural Material Synthesis
-
-Statt gesampelter Texturen (Albedo, Normal, Roughness) kann ein kleines neuronales Netz Material-Eigenschaften aus einem kompakten latenten Code synthetisieren:
-
-```
-Latenter Code (8 Floats) → [Neural Network] → Albedo + Normal + Roughness + AO
-```
-
-**Vorteil**: Dramatisch reduzierter Textur-Speicher, unbegrenzte Detailstufe, prozedurale Variation.
+> Dieses Kapitel basiert auf dem tatsächlich implementierten Code und erklärt
+> die physikalische Grundlage von PBR, die Cook-Torrance BRDF Schritt für
+> Schritt, und jede Designentscheidung — mit dem Warum dahinter.
 
 ---
 
-# Roadmap: Wo Metal 4 Features eingesetzt werden
+## Inhaltsverzeichnis (Milestone 4)
+
+29. [Was ist PBR und warum?](#29-was-ist-pbr)
+30. [Physikalische Grundlagen: Licht und Materie](#30-licht-und-materie)
+31. [Die Rendering Equation](#31-die-rendering-equation)
+32. [Die BRDF — Bidirectional Reflectance Distribution Function](#32-die-brdf)
+33. [Cook-Torrance: Die drei Terme](#33-cook-torrance)
+34. [D — GGX Normal Distribution Function](#34-ggx-ndf)
+35. [G — Smith Geometry Function](#35-smith-geometry)
+36. [F — Schlick Fresnel Approximation](#36-schlick-fresnel)
+37. [Die vollständige BRDF im Shader](#37-vollstaendige-brdf)
+38. [Material-Modell: Metallic/Roughness Workflow](#38-material-modell)
+39. [Shared Headers: C++ und MSL teilen Structs](#39-shared-headers)
+40. [Die Uniforms-Struct — Aufbau und Alignment](#40-uniforms-struct)
+41. [CPU/GPU Alignment: Das float3x3 Problem und die Lösung](#41-alignment-problem)
+42. [Der Light Buffer](#42-light-buffer)
+43. [Der Renderer: drawNode() — Alles zusammenbinden](#43-drawnode)
+44. [Tonemapping: Von HDR nach SDR](#44-tonemapping)
+45. [Zusammenfassung: Was Milestone 4 aufgebaut hat](#45-zusammenfassung-milestone-4)
+
+---
+
+## 29. Was ist PBR?
+
+### Das Problem mit Phong
+
+In Milestone 3 nutzten wir einfaches direktionales Diffus-Shading. Das sieht decent aus, hat aber fundamentale Probleme:
+- Keine Energieerhaltung — ein Objekt kann mehr Licht reflektieren als es empfängt
+- Metalle und Dielektrika (Plastik, Stein) verhalten sich gleich — in der Realität völlig verschieden
+- Parameter wie `shininess` sind magische Zahlen ohne physikalische Bedeutung
+
+**PBR (Physically Based Rendering)** löst das: alle Parameter haben eine physikalische Bedeutung, Energie wird erhalten, Metalle und Nicht-Metalle verhalten sich korrekt.
+
+### Was PBR garantiert
+
+1. **Energieerhaltung**: Ein Objekt kann nicht mehr Licht reflektieren als es empfängt
+2. **Physikalisch korrekte Parameter**: `roughness` (0=spiegelglatt, 1=rau), `metallic` (0=Dielektrikum, 1=Metall)
+
+---
+
+## 30. Licht und Materie
+
+### Was passiert wenn Licht auf eine Oberfläche trifft?
 
 ```
-M1  ✅── Basis (Metal 1-3 APIs, Architektur aufbauen)
-M2  ✅── simd Matrizen, Uniform Buffer, Orbit-Kamera, MVP
-M3  ✅── cgltf glTF-Loader, Index Buffer, Scene Graph, Phong Lighting
-M4  ────  MTL4ArgumentTable (Bindless Buffers), PBR BRDF, GBuffer
-M5  ────  MTL4CommandEncoder (Unified Encoder), Deferred Lighting
-M6  ────  MetalFX Temporal Upscaling + Frame Interpolation
-M7  ────  Acceleration Structures, Inline Ray Tracing, RT Denoiser
-M8  ────  MSL Tensors, Neural Accelerators, Neural Material Synthesis
-          ↑
-          Hier sind alle Metal 4-Features aktiv
+Einfallendes Licht
+        │
+        ▼
+┌───────────────────────────────────┐
+│          Oberfläche               │
+│  ┌─────────────┐ ┌──────────────┐ │
+│  │  Reflexion  │ │  Refraktion  │ │
+│  │ (Specular)  │ │  (Diffuse)   │ │
+│  └─────────────┘ └──────────────┘ │
+└───────────────────────────────────┘
+        │                  │
+        ▼                  ▼
+  reflektiert          absorbiert/
+  (direkt zurück)      subsurface scatter
+                       → Diffuses Licht
 ```
 
-Jeder Milestone baut auf dem vorherigen auf. Kein Schritt kann übersprungen werden ohne das Fundament zu verlieren.
+- **Spekular**: Licht prallt ab — winkelabhängig, Rauheit bestimmt die Schärfe.
+- **Diffus**: Licht dringt ein, wird absorbiert und wieder abgestrahlt — das ist die `baseColor`.
+
+### Metalle vs. Dielektrika
+
+| | Dielektrika (Plastik, Stein, Holz) | Metalle |
+|---|---|---|
+| Spekular | Weiß/farblos | Farbig (Gold: gelblich) |
+| Diffus | Vorhanden | **Keins** |
+| F0 (Fresnel bei 0°) | ~0.04 (4%) | 0.5–1.0, farbig |
+
+Das `metallic`-Parameter schaltet zwischen diesen Verhaltensweisen um.
+
+---
+
+## 31. Die Rendering Equation
+
+```
+Lo(x, ωo) = ∫Ω fr(x, ωi, ωo) · Li(x, ωi) · (ωi · n) dωi
+```
+
+- `fr` = die BRDF — wie viel Licht aus `ωi` in Richtung `ωo` (zur Kamera) reflektiert wird
+- `(ωi · n)` = Lambert's Cosine Law — senkrecht einfallendes Licht ist stärker
+- Das Integral über alle Hemisphären-Richtungen ist in Echtzeit nicht lösbar.
+
+Wir approximieren mit **N diskreten Lichtquellen** — das ist unsere `for`-Schleife:
+
+```metal
+for (uint i = 0; i < uniforms.lightCount; i++) { ... }
+```
+
+---
+
+## 32. Die BRDF
+
+**BRDF = Bidirectional Reflectance Distribution Function**
+
+Die Cook-Torrance BRDF hat zwei Terme:
+
+```
+fr = kd * (albedo/π)  +  (D * G * F) / (4 * (N·V) * (N·L))
+      └── diffus ──┘      └──────── spekular ───────────┘
+```
+
+`kd` = diffuser Anteil. `D * G * F` = spekularer Mikrofacetten-Term.  
+Energieerhaltung: `kd + ks ≤ 1`.
+
+---
+
+## 33. Cook-Torrance: Die drei Terme
+
+Das Spekulare Modell basiert auf der Idee: **jede Oberfläche besteht aus unzähligen winzigen Spiegeln (Mikrofacetten)**.
+
+```
+     Rauhe Oberfläche:          Glatte Oberfläche:
+    /\/\/\/\/\/\               ____________
+    → diffuse Reflexion         → scharfes Highlight
+```
+
+- **D**: Wie viele Mikrofacetten zeigen in H-Richtung?
+- **G**: Wie viele werden durch Nachbarn abgeschattet?
+- **F**: Wie viel Licht wird reflektiert vs. gebrochen (winkelabhängig)?
+
+---
+
+## 34. D — GGX Normal Distribution Function
+
+```metal
+float D_GGX(float NdotH, float roughness) {
+  float a  = roughness * roughness;
+  float a2 = a * a;
+  float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+  return a2 / (M_PI_F * d * d);
+}
+```
+
+Formel: `D_GGX = α² / (π · ((N·H)² · (α²−1) + 1)²)`
+
+- `H = normalize(V + L)` — Halbwinkel-Vektor zwischen Kamera und Licht
+- `α = roughness²` — quadriert weil das visuell linearer wirkt
+- `NdotH` = wie gut H mit der Oberflächennormalen übereinstimmt
+
+**Warum GGX?** GGX hat einen längeren "Tail" als Blinn-Phong — spekular Highlights fallen langsamer ab und ergeben den realistischen Schimmer bei streifendem Licht.
+
+---
+
+## 35. G — Smith Geometry Function
+
+```metal
+float G_Smith(float NdotV, float NdotL, float roughness) {
+  float r  = roughness + 1.0;
+  float k  = (r * r) / 8.0;
+  float gv = NdotV / (NdotV * (1.0 - k) + k);
+  float gl = NdotL / (NdotL * (1.0 - k) + k);
+  return gv * gl;
+}
+```
+
+Beschreibt Selbstbeschattung bei rauhen Oberflächen:
+
+```
+   Licht →
+   ┌─┐
+   │ └─┐  ← diese Mikrofacette ist durch den Nachbarn
+   │   └─┐   abgeschattet (Shadowing) oder verdeckt (Masking)
+```
+
+- `k = (roughness + 1)² / 8` — für direkte Lichtquellen kalibriert
+- `gv` = Masking (Kameraseite), `gl` = Shadowing (Lichtseite)
+- Gesamtgeometrie = `gv * gl` (Smith's Methode: Produkt beider Seiten)
+
+---
+
+## 36. F — Schlick Fresnel Approximation
+
+```metal
+float3 F_Schlick(float HdotV, float3 F0) {
+  return F0 + (1.0 - F0) * pow(1.0 - HdotV, 5.0);
+}
+```
+
+Der Fresnel-Effekt: bei streifendem Blickwinkel reflektiert jede Oberfläche mehr Licht.
+
+```
+Senkrecht (HdotV ≈ 1):  Fresnel ≈ F0        (wenig Reflexion)
+Streifend (HdotV ≈ 0):  Fresnel ≈ 1.0       (viel Reflexion)
+```
+
+**F0** = Basis-Reflexionsgrad bei 0°:
+- Dielektrika: `float3(0.04)` — universell für fast alle nicht-metallischen Materialien
+- Metalle: die `albedo` selbst — deshalb ist Gold gelb und Kupfer rötlich
+
+**Energieerhaltung via Fresnel:**
+
+```metal
+float3 F  = F_Schlick(HdotV, F0);
+float3 kd = (1.0 - F) * (1.0 - metal);
+```
+
+Was nicht reflektiert wird (Fresnel), kann refraktiert werden (Diffus). `(1 - metal)` stellt sicher: Metalle haben `kd = 0`, kein Diffuslicht.
+
+---
+
+## 37. Die vollständige BRDF im Shader
+
+Exakt so implementiert in `shaders/mesh.metal`:
+
+```metal
+float NdotV = saturate(dot(N, V));
+float3 color = float3(0.0);
+
+for (uint i = 0; i < uniforms.lightCount; i++) {
+  float3 L    = normalize(lights[i].direction);
+  float3 H    = normalize(V + L);
+  float NdotL = saturate(dot(N, L));
+  float NdotH = saturate(dot(N, H));
+  float HdotV = saturate(dot(H, V));
+
+  float3 F    = F_Schlick(HdotV, F0);
+  float3 spec = (D_GGX(NdotH, rough) * G_Smith(NdotV, NdotL, rough) * F) /
+                max(4.0 * NdotV * NdotL, 0.001);
+  float3 kd   = (1.0 - F) * (1.0 - metal);
+
+  color += (kd * albedo / M_PI_F + spec) * lights[i].color *
+           lights[i].intensity * NdotL;
+}
+color = color / (color + 1.0);  // Reinhard Tonemapping
+return float4(color, 1.0);
+```
+
+### Zeile für Zeile
+
+**`float3 H = normalize(V + L)`** — Halbwinkel: Mikrofacetten in H-Richtung reflektieren direkt zur Kamera.
+
+**`NdotL = saturate(dot(N, L))`** — Lambert's Law: senkrecht einfallendes Licht überträgt maximale Energie. `saturate` → Licht hinter der Oberfläche = 0.
+
+**`spec / max(4 * NdotV * NdotL, 0.001)`** — `4 * NdotV * NdotL` ist der Normalisierungsfaktor der BRDF. `max(..., 0.001)` verhindert Division durch Null bei streifendem Licht/Kamera.
+
+**`kd * albedo / M_PI_F`** — normalisiertes Lambert-Diffus. Der Faktor `1/π` kommt aus der korrekten Energienormalisierung des Hemisphären-Integrals.
+
+---
+
+## 38. Material-Modell: Metallic/Roughness Workflow
+
+```metal
+float3 albedo = material.baseColor;
+float  rough  = max(material.roughness, 0.04);
+float  metal  = material.metallic;
+float3 F0     = mix(float3(0.04), albedo, metal);
+```
+
+Die `Material`-Struct (`shared/Material.h`):
+
+```c
+struct Material {
+  simd_float3 baseColor;   // Albedo/Farbe
+  float       roughness;   // 0=glatt, 1=rau
+  float       metallic;    // 0=Dielektrikum, 1=Metall
+  simd_float3 _padding;    // 16-Byte-Alignment
+};
+```
+
+**`max(roughness, 0.04)`** — keine völlig glatte Oberfläche: bei `roughness=0` würde der GGX-Term eine unendliche Spitze erzeugen.
+
+**`mix(0.04, albedo, metallic)`** — `mix(a,b,t) = a*(1-t) + b*t`:
+- `metallic=0`: F0 = 0.04 (Dielektrikum)
+- `metallic=1`: F0 = albedo (Metall)
+
+Im Renderer (`buildMaterialBuffer()`) wird ein 3×3 Grid mit variierender Roughness (Zeile) und Metallic/Farbe (Spalte) angelegt:
+
+```cpp
+materials[i].roughness = 0.10f + 0.85f * row;   // 0.1 oben → 0.95 unten
+materials[i].metallic  = t;                       // 0.0 links → 1.0 rechts
+```
+
+---
+
+## 39. Shared Headers: C++ und MSL teilen Structs
+
+### Das Problem
+
+Ohne shared headers muss jede Struct doppelt definiert werden. Desynchronisierung führt zu Alignment-Bugs die sehr schwer zu debuggen sind.
+
+### Die Lösung: `shared/` Verzeichnis
+
+```
+shared/
+├── Uniforms.h        → struct Uniforms   (C++ + MSL via #ifdef)
+├── Material.h        → struct Material   (C++ + MSL, simd_float3 = float3)
+├── Light.h           → struct Light      (C++ + MSL, simd_float3 = float3)
+└── BindingIndices.h  → enum BufferIndex  (C++ + MSL)
+```
+
+In C++ wird `shared/Uniforms.h` via `src/Uniforms.hpp` eingebunden (das nur ein `#pragma once` + `#include` ist). Im Shader direkt:
+
+```metal
+#include "../shared/Uniforms.h"
+#include "../shared/Material.h"
+#include "../shared/Light.h"
+#include "../shared/BindingIndices.h"
+```
+
+### Der `#ifdef __METAL_VERSION__` Guard in `shared/Uniforms.h`
+
+```c
+#ifdef __METAL_VERSION__
+#define F4X4 metal::float4x4
+#define F3    metal::float3
+#else
+#include <simd/simd.h>
+#define F4X4 simd_float4x4
+#define F3    simd_float3
+#endif
+```
+
+`__METAL_VERSION__` wird vom Metal-Compiler automatisch gesetzt. So werden dieselben Feldnamen auf die richtigen Typen für C++ bzw. MSL gemappt.
+
+**Warum `metal::` Prefix?** Der `#include` des Headers passiert **vor** `using namespace metal`. Ohne `metal::` findet der Compiler `float4x4` nicht — es liegt noch im Namespace und ist nicht offen.
+
+**`Material.h` und `Light.h`** brauchen keinen Guard für die Typen — `simd_float3` ist in C++ explizit aus `<simd/simd.h>`, und in MSL ist `simd_float3` ein Alias für `float3`, der automatisch verfügbar ist.
+
+---
+
+## 40. Die Uniforms-Struct — Aufbau und Alignment
+
+```c
+struct Uniforms {
+  F4X4  modelMatrix;       //  64 Bytes
+  F4X4  viewMatrix;        //  64 Bytes
+  F4X4  projectionMatrix;  //  64 Bytes
+  F4X4  normalMatrix;      //  64 Bytes  ← wichtig: float4x4, nicht float3x3!
+  uint  materialIndex;     //   4 Bytes
+  F3    _pad0;             //  12 Bytes  → Gesamt 16 Bytes aligned
+  F3    cameraPosition;    //  12 Bytes
+  float _pad1;             //   4 Bytes  → Gesamt 16 Bytes aligned
+  uint  lightCount;        //   4 Bytes
+  F3    _pad2;             //  12 Bytes  → Gesamt 16 Bytes aligned
+};
+// sizeof(Uniforms) = 4×64 + 16 + 16 + 16 = 304 Bytes
+```
+
+Im C++-Code ist ein `static_assert` als Absicherung eingebaut:
+
+```cpp
+static_assert(sizeof(Uniforms) % 16 == 0, "Uniforms must be 16-byte aligned");
+```
+
+**Warum Padding nach `materialIndex`, `cameraPosition`, `lightCount`?**
+
+GPU-Buffer müssen 16-Byte-aligned sein. `uint` (4 Bytes) + `float3` (12 Bytes) = 16 Bytes — das ist genau eine `float4`-Slot-Breite. Ohne `_pad0` würde `cameraPosition` auf einer 4-Byte-Grenze beginnen, die GPU erwartet aber eine 16-Byte-Grenze.
+
+---
+
+## 41. CPU/GPU Alignment: Das float3x3 Problem und die Lösung
+
+Das war der schwierigste Bug in Milestone 4.
+
+### Warum `float3x3` nicht funktioniert
+
+```
+C++ simd_float3x3:  3 Spalten × 3 floats × 4 Bytes = 36 Bytes
+MSL float3x3:       3 Spalten × 4 floats × 4 Bytes = 48 Bytes  ← GPU paddet auf float4!
+```
+
+Die GPU paddet jede Matrixspalte auf 16 Bytes. C++ tut das nicht. Das bedeutet: alles nach `normalMatrix` in der Struct liegt für CPU und GPU an verschiedenen Byte-Adressen → Garbage.
+
+**Symptome:**
+- Cubes schwarz (lightCount = Garbage → Schleife läuft 0 Mal)
+- materialIndex zeigt im Frame Capture zufällige Zahlen wie `1061098469`
+- Manchmal weiße Cubes (Shader kriegt NaN-Werte)
+
+### Die Lösung: normalMatrix als float4x4
+
+`normalMatrix` wird in der shared Struct als `F4X4` (= `float4x4` / `simd_float4x4`) definiert. Im Renderer wird die `float3x3` aus `math::normalMatrix()` manuell eingepackt:
+
+```cpp
+simd::float3x3 n3 = math::normalMatrix(node.worldMatrix);
+u.normalMatrix = simd_matrix(
+    simd::float4{n3.columns[0].x, n3.columns[0].y, n3.columns[0].z, 0.0f},
+    simd::float4{n3.columns[1].x, n3.columns[1].y, n3.columns[1].z, 0.0f},
+    simd::float4{n3.columns[2].x, n3.columns[2].y, n3.columns[2].z, 0.0f},
+    simd::float4{0.0f, 0.0f, 0.0f, 1.0f});
+```
+
+Im Vertex Shader wird nur `.xyz` jeder Spalte verwendet:
+
+```metal
+float3 worldNorm = float3x3(
+    uniforms.normalMatrix[0].xyz,
+    uniforms.normalMatrix[1].xyz,
+    uniforms.normalMatrix[2].xyz
+) * vertices[vertexID].normal;
+```
+
+### Weitere Lesson: Fragment Buffer separat binden
+
+Metal hat **separate Buffer-Slots für Vertex- und Fragment-Shader**. `setVertexBuffer` macht den Buffer NUR im Vertex Shader sichtbar. Exakt so im Renderer implementiert:
+
+```cpp
+enc->setVertexBuffer(uniformBuffer,  uniformOffset, BufferIndexUniforms);
+enc->setFragmentBuffer(materialBuffer, 0,           BufferIndexMaterial);
+enc->setFragmentBuffer(lightBuffer,   0,            BufferIndexLights);
+enc->setFragmentBuffer(uniformBuffer, uniformOffset, BufferIndexUniforms);
+```
+
+Alle vier Buffer werden pro Draw Call gesetzt — Uniforms sowohl für Vertex als auch Fragment.
+
+---
+
+## 42. Der Light Buffer
+
+### `shared/Light.h`
+
+```c
+struct Light {
+  simd_float3 direction;   // 12 Bytes
+  float       intensity;   //  4 Bytes  → 16 Bytes aligned
+  simd_float3 color;       // 12 Bytes
+  float       _pad;        //  4 Bytes  → 16 Bytes aligned
+};
+```
+
+### Drei Lichter in `buildLightBuffer()`
+
+```cpp
+lights[0].direction = simd::normalize(simd::float3{1.0f,  2.0f,  1.5f});
+lights[0].color     = {1.0f, 0.95f, 0.6f};   // warm
+lights[0].intensity = 3.0f;                   // Key Light
+
+lights[1].direction = simd::normalize(simd::float3{-1.0f, 2.0f, -1.5f});
+lights[1].color     = {0.3f, 0.4f, 1.9f};    // kühl-blau
+lights[1].intensity = 0.8f;                   // Fill Light
+
+lights[2].direction = simd::normalize(simd::float3{0.0f, -1.0f, -2.0f});
+lights[2].color     = {1.0f, 0.95f, 0.6f};   // warm-orange
+lights[2].intensity = 3.0f;                   // Rim Light
+```
+
+Das klassische **Drei-Punkt-Beleuchtungsschema**: Key gibt Richtung, Fill verhindert zu harte Schatten, Rim trennt das Objekt vom Hintergrund.
+
+`lightCount = 3` wird im Uniforms-Struct gesetzt, nicht hardcoded im Shader — so ist die Lichtanzahl zur Laufzeit änderbar ohne Shader-Rekompilierung.
+
+---
+
+## 43. Der Renderer: drawNode() — Alles zusammenbinden
+
+`drawNode()` ist eine rekursive Funktion die den Scene Graph durchläuft. Für jeden Node mit Mesh:
+
+```cpp
+static void drawNode(const Node &node, MTL::RenderCommandEncoder *enc,
+                     MTL::Buffer *uniformBuffer, std::size_t uniformStride,
+                     std::size_t &drawIndex, MTL::Buffer *materialBuffer,
+                     MTL::Buffer *lightBuffer, const simd::float4x4 &view,
+                     const simd::float4x4 &proj, const simd::float3 &cameraEye)
+```
+
+**Schritt 1: Uniforms befüllen**
+
+```cpp
+Uniforms u{};  // zero-initialisieren — kein Garbage in Padding-Feldern
+u.modelMatrix     = node.worldMatrix;
+u.viewMatrix      = view;
+u.projectionMatrix = proj;
+u.normalMatrix    = simd_matrix(...);  // float3x3 → float4x4
+u.materialIndex   = node.materialIndex;
+u.cameraPosition  = cameraEye;
+u.lightCount      = 3;
+```
+
+**Schritt 2: In Buffer memcpy-en**
+
+```cpp
+std::size_t uniformOffset = drawIndex * uniformStride;
+// uniformStride = alignUp(sizeof(Uniforms), 256)
+// Jeder Draw Call bekommt seinen eigenen Slot im Buffer (256-Byte-aligned)
+std::memcpy(dst, &u, sizeof(Uniforms));
+```
+
+**Schritt 3: Alle 4 Buffer binden, dann draw**
+
+```cpp
+enc->setVertexBuffer(uniformBuffer,   uniformOffset, BufferIndexUniforms);
+enc->setFragmentBuffer(materialBuffer, 0,            BufferIndexMaterial);
+enc->setFragmentBuffer(lightBuffer,   0,            BufferIndexLights);
+enc->setFragmentBuffer(uniformBuffer,  uniformOffset, BufferIndexUniforms);
+node.mesh->draw(enc);
+```
+
+### Warum uniformStride = alignUp(sizeof(Uniforms), 256)?
+
+Metal verlangt dass Buffer-Offsets für `constant`-Daten auf 256 Bytes aligned sind. `alignUp(x, 256)` rundet auf das nächste Vielfache von 256 auf. Alle 9 Cubes teilen sich einen großen Buffer — jeder Cube hat einen eigenen Slot bei `drawIndex * uniformStride`.
+
+---
+
+## 44. Tonemapping: Von HDR nach SDR
+
+```metal
+color = color / (color + 1.0);
+```
+
+PBR rechnet in HDR — eine Key Light mit Intensität 3.0 auf weißem Material gibt `color > 3.0`. Der Bildschirm zeigt nur [0, 1].
+
+**Reinhard Tonemapping**: `sdr = hdr / (hdr + 1.0)`
+
+- Bei `color = 0.5`: `0.5/1.5 = 0.33`
+- Bei `color = 1.0`: `1.0/2.0 = 0.5`
+- Bei `color = 10.0`: `10.0/11.0 ≈ 0.91`
+- Bei `color → ∞`: `→ 1.0` — nie Clipping
+
+Die Formel konvergiert sanft gegen 1.0. Alternativen (ACES, Uncharted 2) sind kontrastierter aber komplexer — Reinhard reicht für jetzt.
+
+---
+
+## 45. Zusammenfassung: Was Milestone 4 aufgebaut hat
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       Milestone 4 Stack                          │
+├─────────────────────────────────────────────────────────────────┤
+│  shared/                                                         │
+│  ├── Uniforms.h      float4x4 normalMatrix, cameraPos, lightCount│
+│  ├── Material.h      baseColor, roughness, metallic, _padding    │
+│  ├── Light.h         direction, intensity, color, _pad           │
+│  └── BindingIndices.h  Vertices=0, Uniforms=1, Material=2, Lights=3│
+├─────────────────────────────────────────────────────────────────┤
+│  Renderer (Renderer.mm)                                          │
+│  ├── buildMaterialBuffer()  3×3 Grid, row=roughness, col=metallic│
+│  ├── buildLightBuffer()     Key(warm) + Fill(blau) + Rim(orange) │
+│  └── drawNode()             Uniforms befüllen + 4 Buffer binden  │
+├─────────────────────────────────────────────────────────────────┤
+│  Vertex Shader (mesh.metal)                                      │
+│  └── worldNorm via float4x4 normalMatrix (nur .xyz Spalten)      │
+├─────────────────────────────────────────────────────────────────┤
+│  Fragment Shader (mesh.metal)                                    │
+│  ├── D_GGX()      NDF: Verteilung der Mikrofacetten              │
+│  ├── G_Smith()    Geometry: Selbstbeschattung/Masking            │
+│  ├── F_Schlick()  Fresnel: winkelabhängige Reflexion             │
+│  ├── Light Loop   Σ über lightCount Lichtquellen                 │
+│  └── Reinhard     HDR → SDR Tonemapping                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Gelernte Lektionen                                              │
+│  ├── float3x3 CPU/GPU Mismatch → immer float4x4 für Matrizen     │
+│  ├── setFragmentBuffer() separat von setVertexBuffer()           │
+│  └── Uniforms{} zero-initialisieren                              │
+└─────────────────────────────────────────────────────────────────┘
+```

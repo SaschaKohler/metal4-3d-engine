@@ -8,8 +8,8 @@ An indie 3D engine built step-by-step on **Metal 4** using **metal-cpp**.
 |---|-----------|--------|
 | 1 | Metal backbone — triangle on screen | ✅ Done |
 | 2 | Render loop & camera | ✅ Done |
-| 3 | Mesh loading & scene graph | 🔜 |
-| 4 | PBR deferred lighting | 🔜 |
+| 3 | Mesh loading & scene graph | ✅ Done |
+| 4 | PBR lighting (Cook-Torrance BRDF, Light Buffer) | ✅ Done |
 | 5 | MetalFX upscaling | 🔜 |
 | 6 | Ray traced shadows / AO | 🔜 |
 | 7 | Neural rendering (ML-in-shader) | 🔜 |
@@ -73,6 +73,14 @@ metal4-3d-engine/
 └── vendor/
     └── metal-cpp/            # Apple's header-only C++ Metal wrapper
 ```
+
+---
+
+## Learning Guide
+
+- **`GUIDE.md`** — vollständiges Lehrbuch zu allen Milestones (Deutsch). Erklärt jede Entscheidung mit Physik- und Technik-Hintergrund.
+- **`GUIDE.html`** — gleicher Inhalt als navigierbare HTML-Seite (öffnen mit Browser).
+- Referenzprojekt: `ModernRenderingWithMetal/` — Apple's offiziales Metal Sample als Vergleich.
 
 ---
 

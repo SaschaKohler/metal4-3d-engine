@@ -21,6 +21,27 @@ set(ENGINE_SOURCES
     src/MetalImpl.mm        # metal-cpp implementation (defined once)
 )
 
+# --- stb_image single-header download ---
+set(STB_DIR "${CMAKE_SOURCE_DIR}/vendor/stb")
+set(STB_IMAGE_H "${STB_DIR}/stb_image.h")
+
+if(NOT EXISTS "${STB_IMAGE_H}")
+  message(STATUS "Downloading stb_image.h ...")
+  file(MAKE_DIRECTORY "${STB_DIR}")
+  file(DOWNLOAD
+        "https://raw.githubusercontent.com/nothings/stb/master/stb_image.h"
+        "${STB_IMAGE_H}"
+        STATUS STB_DOWNLOAD_STATUS
+        SHOW_PROGRESS
+    )
+  list(GET STB_DOWNLOAD_STATUS 0 STB_DOWNLOAD_CODE)
+  if(NOT STB_DOWNLOAD_CODE EQUAL 0)
+    list(GET STB_DOWNLOAD_STATUS 1 STB_DOWNLOAD_ERROR)
+    message(FATAL_ERROR "Failed to download stb_image.h: ${STB_DOWNLOAD_ERROR}")
+  endif()
+endif()
+
+
 add_executable(metal4engine MACOSX_BUNDLE ${ENGINE_SOURCES})
 
 # ── metal-cpp headers ────────────────────────────────────────────────────────
@@ -28,6 +49,7 @@ add_executable(metal4engine MACOSX_BUNDLE ${ENGINE_SOURCES})
 target_include_directories(metal4engine PRIVATE
     ${CMAKE_SOURCE_DIR}/vendor/metal-cpp
     ${CMAKE_SOURCE_DIR}/vendor/cgltf
+    ${CMAKE_SOURCE_DIR}/vendor/stb
     ${CMAKE_SOURCE_DIR}/src
 )
 
@@ -37,6 +59,7 @@ find_library(FOUNDATION_LIB  Foundation)
 find_library(QUARTZCORE_LIB  QuartzCore)
 find_library(APPKIT_LIB      AppKit)
 find_library(METALKIT_LIB    MetalKit)
+find_library(METAL_FX        MetalFX)
 
 target_link_libraries(metal4engine
     ${METAL_LIB}
@@ -44,6 +67,7 @@ target_link_libraries(metal4engine
     ${QUARTZCORE_LIB}
     ${APPKIT_LIB}
     ${METALKIT_LIB}
+    ${METAL_FX}
 )
 
 # ── macOS SDK (explicit isysroot so clangd sees it in compile_commands.json) ──
@@ -68,7 +92,10 @@ target_compile_options(metal4engine PRIVATE
 set(SHADER_SOURCE ${CMAKE_SOURCE_DIR}/shaders/mesh.metal)
 set(METALLIB_OUT  ${CMAKE_BINARY_DIR}/default.metallib)
 set(SHARED_SHADER_HEADERS ${CMAKE_SOURCE_DIR}/shared/BindingIndices.h
-                          ${CMAKE_SOURCE_DIR}/shared/Material.h)
+                          ${CMAKE_SOURCE_DIR}/shared/Material.h
+                          ${CMAKE_SOURCE_DIR}/shared/Uniforms.h
+                          ${CMAKE_SOURCE_DIR}/shared/Light.h
+)
 
 add_custom_command(
     OUTPUT  ${METALLIB_OUT}

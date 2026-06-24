@@ -1,4 +1,5 @@
 #import "MetalViewDelegate.h"
+#include <AppKit/AppKit.h>
 #include "Renderer.hpp"
 #import <MetalKit/MetalKit.h>
 #include <memory>
@@ -74,6 +75,18 @@
   float delta = (float)(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY
                                                         : event.deltaY * 3.0f);
   _renderer->onScroll(delta);
+}
+
+// -- Keyboard Input -------------------------------------------------
+- (void)keyDown:(NSEvent *)event {
+  if (event.keyCode == 18)
+    _renderer->setScaleFactor(0.5f);
+  else if (event.keyCode == 19)
+    _renderer->setScaleFactor(0.67f);
+  else if (event.keyCode == 20)
+    _renderer->setScaleFactor(0.75f);
+  else if (event.keyCode == 21)
+    _renderer->setScaleFactor(1.0f);
 }
 
 @end
