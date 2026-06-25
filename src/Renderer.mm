@@ -53,6 +53,7 @@ Renderer::Renderer(MTL::Device *device) : m_device(device->retain()) {
   buildLightBuffer();
   buildScene();
   buildEnvironmentMap();
+  buildIrradianceMap();
 }
 
 Renderer::~Renderer() {
@@ -72,6 +73,19 @@ Renderer::~Renderer() {
   }
   if (m_upscaler) {
     CFRelease(m_upscaler);
+  }
+  if (m_environmentCubemap)
+    m_environmentCubemap->release();
+  if (m_equirectToCubePipeline)
+    m_equirectToCubePipeline->release();
+  if (m_irradianceMap) {
+    m_irradianceMap->release();
+  }
+  if (m_irradiancePipeline) {
+    m_irradiancePipeline->release();
+  }
+  if (m_envSampler) {
+    m_envSampler->release();
   }
   m_device->release();
 }
@@ -239,8 +253,8 @@ void Renderer::buildEnvironmentMap() {
   MTL::ComputeCommandEncoder *encoder = cmdBuffer->computeCommandEncoder();
 
   encoder->setComputePipelineState(m_equirectToCubePipeline);
-  encoder->setTexture(equirectTexture, 0);
-  encoder->setTexture(m_environmentCubemap, 1);
+  encoder->setTexture(equirectTexture, TextureIndexEquirectInput);
+  encoder->setTexture(m_environmentCubemap, TextureIndexEnvironment);
 
   MTL::SamplerDescriptor *samplerDesc = MTL::SamplerDescriptor::alloc()->init();
   samplerDesc->setMinFilter(MTL::SamplerMinMagFilterLinear);
@@ -249,7 +263,7 @@ void Renderer::buildEnvironmentMap() {
   samplerDesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
   MTL::SamplerState *sampler = m_device->newSamplerState(samplerDesc);
 
-  encoder->setSamplerState(sampler, 0);
+  encoder->setSamplerState(sampler, SamplerIndexDefault);
 
   MTL::Size threadsPerGroup = MTL::Size::Make(8, 8, 1);
   MTL::Size threadgroups =
@@ -268,15 +282,68 @@ void Renderer::buildEnvironmentMap() {
   cubeDesc->release();
   kernel->release();
 }
-
+//
 // ---------------------------------------------------------------------------
+//
 void Renderer::buildUniformBuffer() {
   m_uniformStride = alignUp(sizeof(Uniforms), 256);
 
   m_uniformBuffer = m_device->newBuffer(m_uniformStride * m_maxDraws,
                                         MTL::ResourceStorageModeShared);
 }
+//
+// ---------------------------------------------------------------------------
+//
+void Renderer::buildIrradianceMap() {
+  MTL::SamplerDescriptor *samplerDesc = MTL::SamplerDescriptor::alloc()->init();
+  samplerDesc->setMinFilter(MTL::SamplerMinMagFilterLinear);
+  samplerDesc->setMagFilter(MTL::SamplerMinMagFilterLinear);
+  samplerDesc->setMipFilter(MTL::SamplerMipFilterLinear);
+  samplerDesc->setSAddressMode(MTL::SamplerAddressModeClampToEdge);
+  samplerDesc->setTAddressMode(MTL::SamplerAddressModeClampToEdge);
+  samplerDesc->setRAddressMode(MTL::SamplerAddressModeClampToEdge);
+  m_envSampler = m_device->newSamplerState(samplerDesc);
+  samplerDesc->release();
 
+  const uint faceSize = 32;
+
+  MTL::TextureDescriptor *desc = MTL::TextureDescriptor::alloc()->init();
+  desc->setTextureType(MTL::TextureTypeCube);
+  desc->setWidth(faceSize);
+  desc->setHeight(faceSize);
+  desc->setPixelFormat(MTL::PixelFormatRGBA32Float);
+  desc->setMipmapLevelCount(1);
+  desc->setUsage(MTL::TextureUsageShaderWrite | MTL::TextureUsageShaderRead);
+
+  m_irradianceMap = m_device->newTexture(desc);
+
+  NS::Error *error = nullptr;
+  MTL::Function *kernel = m_library->newFunction(NS::String::string(
+      "computeIrradiance", NS::StringEncoding::UTF8StringEncoding));
+  m_irradiancePipeline = m_device->newComputePipelineState(kernel, &error);
+
+  MTL::CommandBuffer *cmdBuffer = m_commandQueue->commandBuffer();
+  MTL::ComputeCommandEncoder *encoder = cmdBuffer->computeCommandEncoder();
+
+  encoder->setComputePipelineState(m_irradiancePipeline);
+  encoder->setTexture(m_environmentCubemap, TextureIndexEnvironment);
+  encoder->setTexture(m_irradianceMap, TextureIndexIrradiance);
+
+  encoder->setSamplerState(m_envSampler, SamplerIndexDefault);
+
+  MTL::Size threadsPerGroup = MTL::Size::Make(8, 8, 1);
+  MTL::Size threadgroups =
+      MTL::Size::Make((faceSize + 7) / 8, (faceSize + 7) / 8, 6);
+
+  encoder->dispatchThreadgroups(threadgroups, threadsPerGroup);
+
+  encoder->endEncoding();
+  cmdBuffer->commit();
+  cmdBuffer->waitUntilCompleted();
+
+  kernel->release();
+  desc->release();
+}
 // ---------------------------------------------------------------------------
 void Renderer::buildMaterialBuffer() {
   static constexpr std::size_t kLightCount = 3;
@@ -537,6 +604,8 @@ void Renderer::draw(CA::MetalDrawable *drawable, MTL::Texture *depthTexture,
   enc->setDepthStencilState(m_depthStencilState);
   enc->setViewport(
       MTL::Viewport{0.0, 0.0, viewportWidth, viewportHeight, 0.0, 1.0});
+  enc->setFragmentTexture(m_irradianceMap, TextureIndexIrradiance);
+  enc->setFragmentSamplerState(m_envSampler, SamplerIndexDefault);
   std::size_t drawIndex = 0;
 
   //

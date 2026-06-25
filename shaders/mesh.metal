@@ -66,13 +66,13 @@ vertex VertexOut vertex_main(uint vertexID [[vertex_id]],
 // ---------------------------------------------------------------------------
 // Fragment shader — simple directional Phong diffuse + ambient
 // ---------------------------------------------------------------------------
-fragment float4 fragment_main(VertexOut in [[stage_in]],
-                              constant Uniforms &uniforms
-                              [[buffer(BufferIndexUniforms)]],
-                              constant Material *materials
-                              [[buffer(BufferIndexMaterial)]],
-                              constant Light *lights
-                              [[buffer(BufferIndexLights)]]) {
+fragment float4 fragment_main(
+    VertexOut in [[stage_in]],
+    constant Uniforms &uniforms [[buffer(BufferIndexUniforms)]],
+    constant Material *materials [[buffer(BufferIndexMaterial)]],
+    constant Light *lights [[buffer(BufferIndexLights)]],
+    texturecube<float> irradianceMap [[texture(TextureIndexIrradiance)]],
+    sampler envSampler [[sampler(SamplerIndexDefault)]]) {
   constant Material &material = materials[in.materialIndex];
 
   if (material.emissive == 1) {
@@ -85,6 +85,9 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
   float rough = max(material.roughness, 0.04);
   float metal = material.metallic;
   float3 F0 = mix(float3(0.04), albedo, metal);
+
+  float3 diffuseIBL =
+      irradianceMap.sample(envSampler, N).rgb * albedo * (1.0 - metal) / M_PI_F;
 
   float NdotV = saturate(dot(N, V));
   float3 color = float3(0.0);
@@ -121,6 +124,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
              lights[i].intensity * NdotL * attenuation;
   }
 
+  color += diffuseIBL;
   // Reinhard tonemapping
   color = color / (color + 1.0);
 

@@ -38,20 +38,24 @@ private:
   void buildDepthStencilState();
   void buildScene();
   void buildEnvironmentMap();
+  MTL::Texture *loadEquirectangularTexture(const std::string &path);
+  void buildIrradianceMap();
 
   MTL::Device *m_device{nullptr};
   MTL::CommandQueue *m_commandQueue{nullptr};
   MTL::RenderPipelineState *m_pipelineState{nullptr};
   MTL::DepthStencilState *m_depthStencilState{nullptr};
   MTL::ComputePipelineState *m_equirectToCubePipeline{nullptr};
+  MTL::ComputePipelineState *m_irradiancePipeline{nullptr};
   MTL::Texture *m_renderTexture{nullptr};
   MTL::Texture *m_outputTexture{nullptr};
-  MTL::Texture *loadEquirectangularTexture(const std::string &path);
   MTL::Texture *m_environmentCubemap{nullptr};
+  MTL::Texture *m_irradianceMap{nullptr};
   MTL::Buffer *m_uniformBuffer{nullptr};
   MTL::Buffer *m_materialBuffer{nullptr};
   MTL::Buffer *m_lightBuffer{nullptr};
   MTL::Library *m_library{nullptr};
+  MTL::SamplerState *m_envSampler{nullptr};
 
   Mesh *m_mesh{nullptr}; // owned
   Mesh *m_lightMesh{nullptr};

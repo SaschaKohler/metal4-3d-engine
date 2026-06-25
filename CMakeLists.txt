@@ -94,6 +94,8 @@ set(SHADER_MESH_AIR
     ${CMAKE_SOURCE_DIR}/shaders/mesh.metal)
 set(SHADER_IBL_AIR
     ${CMAKE_SOURCE_DIR}/shaders/ibl_equirect_to_cube.metal)
+set(SHADER_IRR_AIR
+    ${CMAKE_SOURCE_DIR}/shaders/ibl_irradiance.metal)
 
 set(METALLIB_OUT  ${CMAKE_BINARY_DIR}/default.metallib)
 set(SHARED_SHADER_HEADERS ${CMAKE_SOURCE_DIR}/shared/BindingIndices.h
@@ -106,7 +108,8 @@ add_custom_command(
     OUTPUT  ${METALLIB_OUT}
     COMMAND xcrun -sdk macosx metal -c ${SHADER_MESH_AIR} -o ${CMAKE_BINARY_DIR}/mesh.air
     COMMAND xcrun -sdk macosx metal -c ${SHADER_IBL_AIR} -o ${CMAKE_BINARY_DIR}/ibl.air
-    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/mesh.air ${CMAKE_BINARY_DIR}/ibl.air -o ${METALLIB_OUT}
+    COMMAND xcrun -sdk macosx metal -c ${SHADER_IRR_AIR} -o ${CMAKE_BINARY_DIR}/irr.air
+    COMMAND xcrun -sdk macosx metallib ${CMAKE_BINARY_DIR}/mesh.air ${CMAKE_BINARY_DIR}/ibl.air ${CMAKE_BINARY_DIR}/irr.air -o ${METALLIB_OUT}
     DEPENDS ${SHADER_MESH_AIR} ${SHADER_IBL_AIR} ${SHARED_SHADER_HEADERS}
     COMMENT "Compiling Metal shaders → default.metallib"
 )

@@ -1,13 +1,15 @@
 #include <metal_stdlib>
+#include "../shared/BindingIndices.h"
 using namespace metal;
 
 constant float2 invAtan = float2(0.1591, 0.3183); // 1 / (2π), 1 / π
 
 kernel void equirectToCubemap(texture2d<float, access::sample> inputTexture
-                              [[texture(0)]],
+                              [[texture(TextureIndexEquirectInput)]],
                               texturecube<float, access::write> outputTexture
-                              [[texture(1)]],
-                              sampler texSampler [[sampler(0)]],
+                              [[texture(TextureIndexEnvironment)]],
+                              sampler texSampler
+                              [[sampler(SamplerIndexDefault)]],
                               uint3 gid [[thread_position_in_grid]]) {
   uint face = gid.z;
   uint2 outputSize = outputTexture.get_width();
